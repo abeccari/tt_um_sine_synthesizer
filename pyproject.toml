@@ -1,0 +1,19 @@
+[project]
+name = "tt-um-abeccari-swsynth"
+version = "0.1.0"
+description = "Dependencies for the Sine Wave Synthesizer TinyTapeout project"
+authors = [{ name = "Alberto Beccari" }]
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "pytest==8.4.2",
+    "cocotb==2.0.1",
+    "matplotlib>=3.10.9",
+]
+
+[tool.uv]
+# Keep test/requirements.txt in sync after changing deps or the lockfile:
+#   uv export --no-hyphens --no-emit-project --no-hashes -o test/requirements.txt
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
