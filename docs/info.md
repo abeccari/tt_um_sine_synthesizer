@@ -9,12 +9,12 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-Explain how your project works
+Well this is a work in progress, so it does not work yet.
 
 ## How to test
 
-Explain how to use your project
+You need to wire up the DAC to the HVAC and then you have to flash the ATtiny2313 with this firmware. You can compile the firmware using avr-gcc: `make firmware`.
 
 ## External hardware
 
-List external hardware used in your project (e.g. PMOD, LED display, etc), if any
+None.
