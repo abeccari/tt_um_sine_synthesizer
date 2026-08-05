@@ -4,26 +4,31 @@
  *
  * tt_um_abeccari_swsynth -- CORDIC sine-wave synthesizer.
  *
- *   ui_in[7:0]  FREQ    : 8-bit frequency word (exponential map, 10 Hz - 20 kHz)
- *   uo_out[6:0] SINE    : 7-bit sine sample, OFFSET-BINARY (64 = zero-crossing)
- *   uo_out[7]   PDM     : 1-bit sigma-delta stream (TT Audio Pmod compatible)
- *   clk                 : 12.288 MHz  (= 256 * 48 kHz sample rate)
- *   rst_n               : active-low reset
+ *   ui_in[7:0]   FREQ      : 8-bit frequency word (exponential map, 10 Hz - 20 kHz)
+ *   uo_out[6:0]  SINE      : 7-bit sine sample, OFFSET-BINARY (64 = zero-crossing)
+ *   uo_out[7]    PDM       : 1-bit sigma-delta stream (TT Audio Pmod compatible)
+ *   uio_out[0]   SAMPLE_EN : 48 kHz sample strobe (debug / scope trigger)
+ *   uio_out[7:1] COS       : 7-bit cosine sample, OFFSET-BINARY (debug / quadrature)
+ *   clk                    : 12.288 MHz  (= 256 * 48 kHz sample rate)
+ *   rst_n                  : active-low reset
  *
- * Pipeline:
+ * Pipeline (build each block below):
  *   FREQ -> [2FF sync] -> [freq map] -> phase_inc
  *                                         |
  *   sample_en (clk/256) -> [phase accumulator N=24] -> phase code
  *                                         |
- *                          [CORDIC + quadrant fold] -> sample_s (signed, W=12)
+ *                          [CORDIC + quadrant fold] -> sin/cos (signed, W=12)
  *                                         |
  *                     +-------------------+-------------------+
  *                     v                                       v
  *        [round + saturate -> offset-binary]        [1st-order sigma-delta]
  *                     v                                       v
- *                 uo_out[6:0]                             uo_out[7]
+ *              sine_ob / cos_ob                            pdm_bit
  *
- * Blocks marked TODO are stubs to be filled in next.
+ * SCAFFOLD ONLY: the pin mapping is wired up; implement the numbered blocks.
+ * Drive the four signals in the "signals you produce" section, and the outputs
+ * fall into place. (Declared as wire -- change to reg if you drive them from an
+ * always block.)
  */
 
 `default_nettype none
@@ -40,100 +45,67 @@ module tt_um_abeccari_swsynth (
 );
 
   // ---------------------------------------------------------------------------
-  // Parameters
+  // Parameters (design decisions -- adjust as you like)
   // ---------------------------------------------------------------------------
   localparam integer N_ACC = 24;  // phase-accumulator width (freq resolution)
   localparam integer SW    = 12;  // internal signed sample width (CORDIC datapath)
   localparam integer OW    = 7;   // parallel output width
-  localparam integer DROP  = SW - OW;  // bits dropped when rounding SW -> OW
 
   // ---------------------------------------------------------------------------
-  // 1. Input synchroniser -- ui_in is asynchronous to clk (2-FF sync)
+  // Signals you produce -- drive these in the blocks below
   // ---------------------------------------------------------------------------
-  reg [7:0] freq_sync0, freq_word;
-  always @(posedge clk) begin
-    if (!rst_n) begin
-      freq_sync0 <= 8'd0;
-      freq_word  <= 8'd0;
-    end else begin
-      freq_sync0 <= ui_in;
-      freq_word  <= freq_sync0;
-    end
-  end
+  wire [OW-1:0] sine_ob;    // 7-bit sine,   offset-binary -> uo_out[6:0]
+  wire          pdm_bit;    // 1-bit sigma-delta           -> uo_out[7]
+  wire [OW-1:0] cos_ob;     // 7-bit cosine, offset-binary -> uio_out[7:1]
+  wire          sample_en;  // 48 kHz sample strobe        -> uio_out[0]
 
   // ---------------------------------------------------------------------------
-  // 2. Frequency map : 8-bit word -> N-bit phase increment
-  //    TODO: replace linear placeholder with the exponential law
-  //          (256-entry ROM for bit-exact, or float-decode for min area).
+  // 1. Input synchroniser : ui_in is asynchronous to clk -> 2-FF sync -> freq_word
+  //    TODO
   // ---------------------------------------------------------------------------
-  wire [N_ACC-1:0] phase_inc = {{(N_ACC-8){1'b0}}, freq_word} << 4;  // PLACEHOLDER
 
   // ---------------------------------------------------------------------------
-  // 3. Sample-rate strobe : sample_en pulses at clk/256 = 48 kHz
+  // 2. Frequency map : 8-bit freq_word -> N_ACC-bit phase_inc
+  //    (exponential law: 256-entry ROM for bit-exact, or float-decode for area)
+  //    TODO
   // ---------------------------------------------------------------------------
-  reg  [7:0] strobe_cnt;
-  wire       sample_en = (strobe_cnt == 8'd0);
-  always @(posedge clk) begin
-    if (!rst_n) strobe_cnt <= 8'd0;
-    else        strobe_cnt <= strobe_cnt + 8'd1;
-  end
 
   // ---------------------------------------------------------------------------
-  // 4. Phase accumulator (NCO) -- wraps mod 2^N automatically
+  // 3. Sample-rate strobe : drive sample_en high for one cycle at clk/256 (48 kHz)
+  //    TODO
   // ---------------------------------------------------------------------------
-  reg [N_ACC-1:0] phase_acc;
-  always @(posedge clk) begin
-    if (!rst_n)          phase_acc <= {N_ACC{1'b0}};
-    else if (sample_en)  phase_acc <= phase_acc + phase_inc;
-  end
 
   // ---------------------------------------------------------------------------
-  // 5. Phase -> sine sample
-  //    TODO: CORDIC core (rotation mode) + quadrant fold, driven from the top
-  //          bits of phase_acc. Output is signed, full-scale ~ +/-2^(SW-1).
-  //          Until then, hold silence (offset-binary midscale).
+  // 4. Phase accumulator (NCO) : phase_acc += phase_inc on sample_en, wraps mod 2^N
+  //    TODO
   // ---------------------------------------------------------------------------
-  wire signed [SW-1:0] sample_s = {SW{1'b0}};  // PLACEHOLDER (0 -> midscale out)
 
   // ---------------------------------------------------------------------------
-  // 6a. Parallel output : round + saturate signed SW -> signed OW, then
-  //     convert to offset-binary (invert MSB). 64 = zero-crossing.
+  // 5. CORDIC core (rotation mode) + quadrant fold : phase code -> signed sin/cos
+  //    (golden reference: docs/cordic_sample.py, matched W / n_iter)
+  //    TODO
   // ---------------------------------------------------------------------------
-  wire signed [SW:0] sample_ext   = {sample_s[SW-1], sample_s};
-  wire signed [SW:0] sample_round = sample_ext + $signed(2 ** (DROP - 1));  // +1/2 LSB
-  wire signed [SW:0] sample_shr   = sample_round >>> DROP;
-
-  reg signed [OW-1:0] sample_sat;
-  always @(*) begin
-    if      (sample_shr >  63) sample_sat =  7'sd63;   // saturate high
-    else if (sample_shr < -64) sample_sat = -7'sd64;   // saturate low
-    else                       sample_sat = sample_shr[OW-1:0];
-  end
-
-  wire [OW-1:0] sine_ob = {~sample_sat[OW-1], sample_sat[OW-2:0]};  // signed -> offset-binary
 
   // ---------------------------------------------------------------------------
-  // 6b. Sigma-delta output : 1st-order modulator at full clk rate (OSR = 256).
-  //     Fed the FULL-precision sample (not the truncated 7-bit value).
-  //     TODO: consider 2nd-order for better in-band SNR.
+  // 6a. Output format : round + saturate signed SW -> OW, then to offset-binary.
+  //     Drive sine_ob and cos_ob (64 = zero-crossing).
+  //     TODO
   // ---------------------------------------------------------------------------
-  wire [SW-1:0] sample_u = {~sample_s[SW-1], sample_s[SW-2:0]};  // full-width offset-binary
-  reg  [SW:0]   dsm_acc;
-  always @(posedge clk) begin
-    if (!rst_n) dsm_acc <= {(SW+1){1'b0}};
-    else        dsm_acc <= dsm_acc[SW-1:0] + sample_u;  // carry-out = PDM bit
-  end
-  wire pdm_bit = dsm_acc[SW];
 
   // ---------------------------------------------------------------------------
-  // 7. Pin assignments
+  // 6b. Sigma-delta : 1st-order modulator at full clk rate (OSR = 256), fed the
+  //     FULL-precision sample (not the 7-bit value). Drive pdm_bit.
+  //     TODO
   // ---------------------------------------------------------------------------
-  assign uo_out  = {pdm_bit, sine_ob};  // [7]=PDM, [6:0]=sine (offset-binary)
-  assign uio_out = 8'b0;                // bidir bus unused -> tie off
-  assign uio_oe  = 8'b0;                // all bidir pins as inputs
 
-  // List all unused inputs to prevent warnings. phase_acc is consumed once the
-  // CORDIC block (step 5) is wired in; kept here until then.
-  wire _unused = &{ena, uio_in, phase_acc, 1'b0};
+  // ---------------------------------------------------------------------------
+  // 7. Pin mapping (done for you)
+  // ---------------------------------------------------------------------------
+  assign uo_out  = {pdm_bit, sine_ob};    // [7]=PDM, [6:0]=sine (offset-binary)
+  assign uio_out = {cos_ob, sample_en};   // [7:1]=cosine, [0]=SAMPLE_EN
+  assign uio_oe  = 8'hFF;                  // all bidir pins driven as outputs
+
+  // List all unused inputs to prevent warnings.
+  wire _unused = &{ena, uio_in, 1'b0};
 
 endmodule
