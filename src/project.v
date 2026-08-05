@@ -45,14 +45,14 @@ module tt_um_abeccari_swsynth (
 );
 
   // ---------------------------------------------------------------------------
-  // Parameters (design decisions -- adjust as you like)
+  // Parameters
   // ---------------------------------------------------------------------------
   localparam integer N_ACC = 24;  // phase-accumulator width (freq resolution)
   localparam integer SW    = 12;  // internal signed sample width (CORDIC datapath)
   localparam integer OW    = 7;   // parallel output width
 
   // ---------------------------------------------------------------------------
-  // Signals you produce -- drive these in the blocks below
+  // Signals
   // ---------------------------------------------------------------------------
   wire [OW-1:0] sine_ob;    // 7-bit sine,   offset-binary -> uo_out[6:0]
   wire          pdm_bit;    // 1-bit sigma-delta           -> uo_out[7]
@@ -82,9 +82,11 @@ module tt_um_abeccari_swsynth (
 
   // ---------------------------------------------------------------------------
   // 5. CORDIC core (rotation mode) + quadrant fold : phase code -> signed sin/cos
-  //    (golden reference: docs/cordic_sample.py, matched W / n_iter)
   //    TODO
   // ---------------------------------------------------------------------------
+
+  wire signed [SW-1:0] sample_s = '0;
+  wire [SW-1:0] sample_u = {~sample_s[SW-1], sample_s[SW-2:0]};
 
   // ---------------------------------------------------------------------------
   // 6a. Output format : round + saturate signed SW -> OW, then to offset-binary.
@@ -95,11 +97,14 @@ module tt_um_abeccari_swsynth (
   // ---------------------------------------------------------------------------
   // 6b. Sigma-delta : 1st-order modulator at full clk rate (OSR = 256), fed the
   //     FULL-precision sample (not the 7-bit value). Drive pdm_bit.
-  //     TODO
   // ---------------------------------------------------------------------------
 
+  sigma_delta #(.W(SW)) u_dsm (
+      .clk(clk), .rst_n(rst_n), .x(sample_u), .pdm_bit(pdm_bit)
+  );
+
   // ---------------------------------------------------------------------------
-  // 7. Pin mapping (done for you)
+  // 7. Pin mapping
   // ---------------------------------------------------------------------------
   assign uo_out  = {pdm_bit, sine_ob};    // [7]=PDM, [6:0]=sine (offset-binary)
   assign uio_out = {cos_ob, sample_en};   // [7:1]=cosine, [0]=SAMPLE_EN
@@ -108,4 +113,26 @@ module tt_um_abeccari_swsynth (
   // List all unused inputs to prevent warnings.
   wire _unused = &{ena, uio_in, 1'b0};
 
+endmodule
+
+// Sigma-delta modulator module definition (1st-order)
+
+module sigma_delta #(
+    parameter integer W = 12
+) (
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire [W-1:0] x,        // full-precision UNSIGNED (offset-binary) sample
+    output reg          pdm_bit
+);
+    reg [W-1:0] dsm_acc;          // internal state = the error residue
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            dsm_acc <= {W{1'b0}};
+            pdm_bit <= 1'b0;
+        end
+        else begin
+            {pdm_bit, dsm_acc} <= dsm_acc + x;
+        end
+    end
 endmodule
