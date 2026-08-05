@@ -22,25 +22,25 @@ project:
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
-  # Inputs
-  ui[0]: ""
-  ui[1]: ""
-  ui[2]: ""
-  ui[3]: ""
-  ui[4]: ""
-  ui[5]: ""
-  ui[6]: ""
-  ui[7]: ""
+  # Inputs -- 8-bit frequency control word (exponential law, 10 Hz - 20 kHz)
+  ui[0]: "FREQ0 (freq word LSB)"
+  ui[1]: "FREQ1"
+  ui[2]: "FREQ2"
+  ui[3]: "FREQ3"
+  ui[4]: "FREQ4"
+  ui[5]: "FREQ5"
+  ui[6]: "FREQ6"
+  ui[7]: "FREQ7 (freq word MSB)"
 
-  # Outputs
-  uo[0]: ""
-  uo[1]: ""
-  uo[2]: ""
-  uo[3]: ""
-  uo[4]: ""
-  uo[5]: ""
-  uo[6]: ""
-  uo[7]: ""
+  # Outputs -- 7-bit parallel sine (offset-binary) + 1-bit sigma-delta
+  uo[0]: "SINE0 (sine LSB, offset-binary)"
+  uo[1]: "SINE1"
+  uo[2]: "SINE2"
+  uo[3]: "SINE3"
+  uo[4]: "SINE4"
+  uo[5]: "SINE5"
+  uo[6]: "SINE6 (sine MSB)"
+  uo[7]: "PDM (1-bit sigma-delta audio out)"
 
   # Bidirectional pins
   uio[0]: ""
