@@ -47,7 +47,7 @@ module tt_um_abeccari_swsynth (
   // ---------------------------------------------------------------------------
   // Parameters
   // ---------------------------------------------------------------------------
-  localparam integer N_ACC = 24;  // phase-accumulator width (freq resolution)
+  localparam integer N_ACC = 20;  // phase-accumulator width (freq resolution)
   localparam integer SW    = 12;  // internal signed sample width (CORDIC datapath)
   localparam integer OW    = 7;   // parallel output width
 
@@ -72,13 +72,22 @@ module tt_um_abeccari_swsynth (
 
   // ---------------------------------------------------------------------------
   // 3. Sample-rate strobe : drive sample_en high for one cycle at clk/256 (48 kHz)
-  //    TODO
   // ---------------------------------------------------------------------------
 
   // ---------------------------------------------------------------------------
   // 4. Phase accumulator (NCO) : phase_acc += phase_inc on sample_en, wraps mod 2^N
-  //    TODO
   // ---------------------------------------------------------------------------
+
+  wire [N_ACC-1:0] phase_inc = 'hfff;
+  wire [N_ACC-1:0] phase_acc;
+
+  nco #( .N(N_ACC) ) u_nco (
+    .clk(clk),
+    .rst_n(rst_n),
+    .phase_inc(phase_inc),
+    .sample_en(sample_en),
+    .phase(phase_acc)
+  );
 
   // ---------------------------------------------------------------------------
   // 5. CORDIC core (rotation mode) + quadrant fold : phase code -> signed sin/cos
@@ -135,4 +144,28 @@ module sigma_delta #(
             {pdm_bit, dsm_acc} <= dsm_acc + x;
         end
     end
+endmodule
+
+// Phase accumulator and sample rate oscillator
+
+module nco #(
+  parameter integer N = 20 // phase increment width
+  )(
+  input wire clk,
+  input wire rst_n,
+  input wire [N-1:0] phase_inc,
+  output wire sample_en,
+  output reg [N-1:0] phase
+);
+
+  reg [7:0] div;
+  always @(posedge clk)
+    if (!rst_n) div <= 8'b0;
+    else div <= div + 8'b1;
+  assign sample_en = (div == 8'hff); // High for exactly one clock cycle every 256
+
+  always @(posedge clk)
+    if (!rst_n) phase <= 'b0;
+    else if (sample_en) phase <= phase + phase_inc;
+
 endmodule
