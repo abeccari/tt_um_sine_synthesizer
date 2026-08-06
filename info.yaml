@@ -22,15 +22,15 @@ project:
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
-  # Inputs -- 8-bit frequency control word (exponential law, 10 Hz - 20 kHz)
-  ui[0]: "FREQ0 (freq word LSB)"
-  ui[1]: "FREQ1"
-  ui[2]: "FREQ2"
-  ui[3]: "FREQ3"
-  ui[4]: "FREQ4"
-  ui[5]: "FREQ5"
-  ui[6]: "FREQ6"
-  ui[7]: "FREQ7 (freq word MSB)"
+  # Inputs -- musical note selector: {octave[7:4], semitone[3:0]}
+  ui[0]: "NOTE0 (semitone LSB)"
+  ui[1]: "NOTE1"
+  ui[2]: "NOTE2"
+  ui[3]: "NOTE3 (semitone MSB; 0=A..11=G#)"
+  ui[4]: "OCT0 (octave LSB)"
+  ui[5]: "OCT1"
+  ui[6]: "OCT2"
+  ui[7]: "OCT3 (octave MSB; above A0=27.5Hz)"
 
   # Outputs -- 7-bit parallel sine (offset-binary) + 1-bit sigma-delta
   uo[0]: "SINE0 (sine LSB, offset-binary)"

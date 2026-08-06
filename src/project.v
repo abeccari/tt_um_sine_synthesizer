@@ -4,7 +4,8 @@
  *
  * tt_um_abeccari_swsynth -- CORDIC sine-wave synthesizer.
  *
- *   ui_in[7:0]   FREQ      : 8-bit frequency word (exponential map, 10 Hz - 20 kHz)
+ *   ui_in[3:0]   NOTE      : semitone within the octave (0=A .. 11=G#; 12-15 -> A)
+ *   ui_in[7:4]   OCT       : octaves above A0 = 27.5 Hz (0-8, clamped below Nyquist)
  *   uo_out[6:0]  SINE      : 7-bit sine sample, OFFSET-BINARY (64 = zero-crossing)
  *   uo_out[7]    PDM       : 1-bit sigma-delta stream (TT Audio Pmod compatible)
  *   uio_out[0]   SAMPLE_EN : 48 kHz sample strobe (debug / scope trigger)
@@ -65,20 +66,21 @@ module tt_um_abeccari_swsynth (
   // ---------------------------------------------------------------------------
 
   // ---------------------------------------------------------------------------
-  // 2. Frequency map : 8-bit freq_word -> N_ACC-bit phase_inc
-  //    (exponential law: 256-entry ROM for bit-exact, or float-decode for area)
-  //    TODO
+  // 2. Frequency map : ui_in {octave[7:4], note[3:0]} -> N_ACC-bit phase_inc
   // ---------------------------------------------------------------------------
 
-  // ---------------------------------------------------------------------------
-  // 3. Sample-rate strobe : drive sample_en high for one cycle at clk/256 (48 kHz)
-  // ---------------------------------------------------------------------------
+  wire [N_ACC-1:0] phase_inc;
+
+  freq_map #(.N(N_ACC)) u_freq_map (
+    .freq_word(ui_in),
+    .phase_inc(phase_inc)
+  );
+
 
   // ---------------------------------------------------------------------------
-  // 4. Phase accumulator (NCO) : phase_acc += phase_inc on sample_en, wraps mod 2^N
+  // 3. Phase accumulator (NCO) : phase_acc += phase_inc on sample_en, wraps mod 2^N
   // ---------------------------------------------------------------------------
 
-  wire [N_ACC-1:0] phase_inc = 'hfff;
   wire [N_ACC-1:0] phase_acc;
 
   nco #( .N(N_ACC) ) u_nco (
@@ -90,7 +92,7 @@ module tt_um_abeccari_swsynth (
   );
 
   // ---------------------------------------------------------------------------
-  // 5. CORDIC core (rotation mode) + quadrant fold : phase code -> signed sin/cos
+  // 4. CORDIC core (rotation mode) + quadrant fold : phase code -> signed sin/cos
   //    TODO
   // ---------------------------------------------------------------------------
 
@@ -98,13 +100,13 @@ module tt_um_abeccari_swsynth (
   wire [SW-1:0] sample_u = {~sample_s[SW-1], sample_s[SW-2:0]};
 
   // ---------------------------------------------------------------------------
-  // 6a. Output format : round + saturate signed SW -> OW, then to offset-binary.
+  // 5a. Output format : round + saturate signed SW -> OW, then to offset-binary.
   //     Drive sine_ob and cos_ob (64 = zero-crossing).
   //     TODO
   // ---------------------------------------------------------------------------
 
   // ---------------------------------------------------------------------------
-  // 6b. Sigma-delta : 1st-order modulator at full clk rate (OSR = 256), fed the
+  // 5b. Sigma-delta : 1st-order modulator at full clk rate (OSR = 256), fed the
   //     FULL-precision sample (not the 7-bit value). Drive pdm_bit.
   // ---------------------------------------------------------------------------
 
@@ -113,7 +115,7 @@ module tt_um_abeccari_swsynth (
   );
 
   // ---------------------------------------------------------------------------
-  // 7. Pin mapping
+  // 6. Pin mapping
   // ---------------------------------------------------------------------------
   assign uo_out  = {pdm_bit, sine_ob};    // [7]=PDM, [6:0]=sine (offset-binary)
   assign uio_out = {cos_ob, sample_en};   // [7:1]=cosine, [0]=SAMPLE_EN
@@ -121,6 +123,47 @@ module tt_um_abeccari_swsynth (
 
   // List all unused inputs to prevent warnings.
   wire _unused = &{ena, uio_in, 1'b0};
+
+endmodule
+
+// Frequency map: 8-bit word {octave[7:4], note[3:0]} -> phase increment.
+//   note[3:0] : equal-tempered semitone, 0=A .. 11=G# (codes 12-15 fold to A)
+//   oct [7:4] : whole-octave shift (doubling phase_inc = +1 octave, since f prop phase_inc)
+// LUT values are for A0 = 27.5 Hz, f_s = 48 kHz, N = 20 accumulator.
+
+module freq_map #(
+  parameter integer N       = 20,
+  parameter integer MAX_OCT = 8    // clamp: keeps the top note (G#) below Nyquist (2^(N-1))
+) (
+  input  wire [7:0]   freq_word,   // {octave[7:4], note[3:0]}
+  output wire [N-1:0] phase_inc
+);
+  wire [3:0] note = freq_word[3:0];
+  wire [3:0] oct  = freq_word[7:4];
+
+  // One octave of equal-tempered semitones from A0 = 27.5 Hz.
+  reg [N-1:0] base;
+  always @(*) begin
+    case (note)
+      4'd0:    base = 'd601;   // A    27.50 Hz
+      4'd1:    base = 'd636;   // A#   29.14 Hz
+      4'd2:    base = 'd674;   // B    30.87 Hz
+      4'd3:    base = 'd714;   // C    32.70 Hz
+      4'd4:    base = 'd757;   // C#   34.65 Hz
+      4'd5:    base = 'd802;   // D    36.71 Hz
+      4'd6:    base = 'd850;   // D#   38.89 Hz
+      4'd7:    base = 'd900;   // E    41.20 Hz
+      4'd8:    base = 'd954;   // F    43.65 Hz
+      4'd9:    base = 'd1010;  // F#   46.25 Hz
+      4'd10:   base = 'd1070;  // G    49.00 Hz
+      4'd11:   base = 'd1134;  // G#   51.91 Hz
+      default: base = 'd601;   // codes 12-15 -> A
+    endcase
+  end
+
+  // Octave = left shift; clamp so the tone stays below Nyquist (no aliasing).
+  wire [3:0] oct_cap = (oct > MAX_OCT[3:0]) ? MAX_OCT[3:0] : oct;
+  assign phase_inc = base << oct_cap;
 
 endmodule
 
