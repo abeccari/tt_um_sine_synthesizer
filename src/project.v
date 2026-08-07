@@ -61,10 +61,18 @@ module tt_um_abeccari_swsynth (
   wire          sample_en;  // 48 kHz sample strobe        -> uio_out[0]
 
   // ---------------------------------------------------------------------------
-  // 1. Input synchroniser : ui_in is asynchronous to clk -> 2-FF sync -> freq_word
-  //    TODO
+  // 1. Input synchroniser
   // ---------------------------------------------------------------------------
 
+  /* Two flip-flops sync the input signal to clk and avoid metastability */
+
+  reg [7:0] ui_sync0, ui_sync1;
+  always @(posedge clk) begin
+    ui_sync0 <= ui_in;
+    ui_sync1 <= ui_sync0;
+  end
+  
+  
   // ---------------------------------------------------------------------------
   // 2. Frequency map : ui_in {octave[7:4], note[3:0]} -> N_ACC-bit phase_inc
   // ---------------------------------------------------------------------------
@@ -72,7 +80,7 @@ module tt_um_abeccari_swsynth (
   wire [N_ACC-1:0] phase_inc;
 
   freq_map #(.N(N_ACC)) u_freq_map (
-    .freq_word(ui_in),
+    .freq_word(ui_sync1),
     .phase_inc(phase_inc)
   );
 
@@ -96,22 +104,31 @@ module tt_um_abeccari_swsynth (
   //    TODO
   // ---------------------------------------------------------------------------
 
-  wire signed [SW-1:0] sample_s = '0;
-  wire [SW-1:0] sample_u = {~sample_s[SW-1], sample_s[SW-2:0]};
+  wire [OW-1:0] sine_s, cos_s; // Signed outputs from CORDIC
+
+  cordic #(.N_ACC(N_ACC)) u_cordic (
+    .clk(sample_en),
+    .rst_n(rst_n),
+    .phase_acc(phase_acc),
+    .sine(sine_s),
+    .cosine(cos_s)
+  );
 
   // ---------------------------------------------------------------------------
   // 5a. Output format : round + saturate signed SW -> OW, then to offset-binary.
   //     Drive sine_ob and cos_ob (64 = zero-crossing).
-  //     TODO
   // ---------------------------------------------------------------------------
+
+  assign sine_ob = {~sine_s[OW-1], sine_s[OW-2:0]};
+  assign cos_ob  = {~cos_s[OW-1], cos_s[OW-2:0]};
 
   // ---------------------------------------------------------------------------
   // 5b. Sigma-delta : 1st-order modulator at full clk rate (OSR = 256), fed the
   //     FULL-precision sample (not the 7-bit value). Drive pdm_bit.
   // ---------------------------------------------------------------------------
 
-  sigma_delta #(.W(SW)) u_dsm (
-      .clk(clk), .rst_n(rst_n), .x(sample_u), .pdm_bit(pdm_bit)
+  sigma_delta #(.W(OW)) u_dsm (
+      .clk(clk), .rst_n(rst_n), .x(sine_ob), .pdm_bit(pdm_bit)
   );
 
   // ---------------------------------------------------------------------------
@@ -211,4 +228,82 @@ module nco #(
     if (!rst_n) phase <= 'b0;
     else if (sample_en) phase <= phase + phase_inc;
 
+endmodule
+
+// CORDIC engine: Compute sines and cosines by iterating additions and bit shifts.
+// Uses the first input bits to determine the quadrant and swap signs and outputs if necessary.
+
+module cordic #(
+  parameter integer N_ACC = 20, // phase accumulator with (full turn = 2 ** N_ACC)
+  parameter integer N_ITER = 5 // rotation stages
+)(
+  input wire clk,
+  input wire rst_n,
+  input wire [N_ACC-1:0] phase_acc,
+  output reg [6:0] sine,
+  output reg [6:0] cosine
+);
+  reg signed [6:0] x, xn, y, z, c_full, s_full;
+  reg [1:0] quad;
+
+  // Hardcoded (2 ** 7) * atan(2 ** -k) / (2 * pi) rounded to 7 bits
+  function signed [6:0] atan_lut(input [3:0] k);
+    case(k)
+      4'd0: atan_lut = 7'd16;
+      4'd1: atan_lut = 7'd9;
+      4'd2: atan_lut = 7'd5;
+      4'd3: atan_lut = 7'd3;
+      4'd4: atan_lut = 7'd1;
+      4'd5: atan_lut = 7'd1;
+      default: atan_lut = 7'd0;
+    endcase
+  endfunction
+
+  // CORDIC algorithm for first quadrant: approximate cos and sin with ever smaller rotations
+  
+  integer k;
+  localparam signed [6:0] GAIN = 7'd19;
+
+  always @(*) begin
+      quad = phase_acc[N_ACC-1: N_ACC-2];
+      z = phase_acc[N_ACC - 3: N_ACC - 7];
+      y = '0;
+      x = GAIN;  // Pre-compensates for CORDIC gain
+
+      for (k = 0; k < N_ITER; k = k + 1) begin
+        if (z >= 0) begin
+          xn = x - (y >>> k);
+          y = y + (x >>> k);
+          x = xn;
+          z = z - atan_lut(k);
+        end
+        else begin
+          xn = x + (y >>> k);
+          y = y - (x >>> k);
+          x = xn;
+          z = z + atan_lut(k);
+        end
+      end
+
+    // Fold quadrants 2-4 to first by flipping and adjusting signs.
+
+    case(quad)
+      2'd0: begin c_full = x; s_full = y; end
+      2'd1: begin c_full = -y; s_full = x; end
+      2'd2: begin c_full = -x; s_full = -y; end
+      2'd3: begin c_full = y; s_full = -x; end
+    endcase
+  end
+
+  always @(posedge clk) begin // Register the result
+    if (!rst_n) begin
+      sine <= '0;
+      cosine <= '0;
+    end
+    else begin
+      sine <= s_full;
+      cosine <= c_full;
+    end
+  end
+  
 endmodule
