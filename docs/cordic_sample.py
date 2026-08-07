@@ -2,7 +2,7 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 
-W = 7                 # register width (bits)
+W = 12                 # register width (bits)
 FRAC = W - 2           # fractional bits -> Q2.6
 SCALE = 1 << FRAC
 MASK = 2 ** W - 1 # 1111111 for W=7
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     # Left: ground truth vs. CORDIC approximation for a few iteration counts.
     sines = np.zeros_like(angles)
     cosines = np.zeros_like(angles)
-    for n in range(W - 5, W - 1):
+    for n in range(max(2, W - 8), W - 1):
         for k, turn in enumerate(turns):
             cosines[k], sines[k] = cordic_general(turn, n)
         ax_curves.plot(angles, cosines, label=f"CORDIC {n} iterations")

@@ -104,10 +104,10 @@ module tt_um_abeccari_swsynth (
   //    TODO
   // ---------------------------------------------------------------------------
 
-  wire [OW-1:0] sine_s, cos_s; // Signed outputs from CORDIC
+  wire signed [SW-1:0] sine_s, cos_s; // signed CORDIC outputs, Q2.(SW-2)
 
-  cordic #(.N_ACC(N_ACC)) u_cordic (
-    .clk(sample_en),
+  cordic #(.PW(N_ACC), .W(SW)) u_cordic (   // NITER defaults to 6
+    .clk(clk),
     .rst_n(rst_n),
     .phase_acc(phase_acc),
     .sine(sine_s),
@@ -119,16 +119,20 @@ module tt_um_abeccari_swsynth (
   //     Drive sine_ob and cos_ob (64 = zero-crossing).
   // ---------------------------------------------------------------------------
 
-  assign sine_ob = {~sine_s[OW-1], sine_s[OW-2:0]};
-  assign cos_ob  = {~cos_s[OW-1], cos_s[OW-2:0]};
+  sample_to_ob #(.SW(SW), .OW(OW)) u_sine_fmt (.s(sine_s), .ob(sine_ob));
+  sample_to_ob #(.SW(SW), .OW(OW)) u_cos_fmt  (.s(cos_s),  .ob(cos_ob));
 
   // ---------------------------------------------------------------------------
   // 5b. Sigma-delta : 1st-order modulator at full clk rate (OSR = 256), fed the
   //     FULL-precision sample (not the 7-bit value). Drive pdm_bit.
   // ---------------------------------------------------------------------------
 
-  sigma_delta #(.W(OW)) u_dsm (
-      .clk(clk), .rst_n(rst_n), .x(sine_ob), .pdm_bit(pdm_bit)
+  // Full-precision SW-bit sine (scaled to full swing) -> better PDM SNR than the 7-bit value.
+  wire [SW-1:0] sine_dsm;
+  sample_to_ob #(.SW(SW), .OW(SW)) u_sine_dsm (.s(sine_s), .ob(sine_dsm));
+
+  sigma_delta #(.W(SW)) u_dsm (
+      .clk(clk), .rst_n(rst_n), .x(sine_dsm), .pdm_bit(pdm_bit)
   );
 
   // ---------------------------------------------------------------------------
@@ -230,80 +234,97 @@ module nco #(
 
 endmodule
 
-// CORDIC engine: Compute sines and cosines by iterating additions and bit shifts.
-// Uses the first input bits to determine the quadrant and swap signs and outputs if necessary.
+// CORDIC engine (rotation mode) + quadrant fold: phase code -> signed sin/cos.
+// Datapath width W is parametric (Q2.(W-2)). The atan table is stored once at
+// WMAX-bit precision and rescaled to W bits by a constant shift (fully synthesizable),
+// so changing W is a one-line edit. Master table computed offline (turns * 2^WMAX).
 
 module cordic #(
-  parameter integer N_ACC = 20, // phase accumulator with (full turn = 2 ** N_ACC)
-  parameter integer N_ITER = 5 // rotation stages
+  parameter integer PW    = 20,   // phase accumulator width (full turn = 2^PW)
+  parameter integer W     = 12,   // datapath width, Q2.(W-2)
+  parameter integer NITER = 6     // rotation stages (~7 effective bits at W=12)
 )(
-  input wire clk,
-  input wire rst_n,
-  input wire [N_ACC-1:0] phase_acc,
-  output reg [6:0] sine,
-  output reg [6:0] cosine
+  input  wire                clk,
+  input  wire                rst_n,
+  input  wire [PW-1:0]       phase_acc,
+  output reg  signed [W-1:0] sine,
+  output reg  signed [W-1:0] cosine
 );
-  reg signed [6:0] x, xn, y, z, c_full, s_full;
-  reg [1:0] quad;
+  localparam integer    WMAX   = 16;         // master precision (require W <= WMAX)
+  localparam integer    SH     = WMAX - W;
+  localparam [WMAX-1:0] GAIN_M = 16'd9949;   // 1/K in Q2.14
 
-  // Hardcoded (2 ** 7) * atan(2 ** -k) / (2 * pi) rounded to 7 bits
-  function signed [6:0] atan_lut(input [3:0] k);
-    case(k)
-      4'd0: atan_lut = 7'd16;
-      4'd1: atan_lut = 7'd9;
-      4'd2: atan_lut = 7'd5;
-      4'd3: atan_lut = 7'd3;
-      4'd4: atan_lut = 7'd1;
-      4'd5: atan_lut = 7'd1;
-      default: atan_lut = 7'd0;
+  // master atan table: round( atan(2^-k)/(2*pi) * 2^WMAX )
+  function [WMAX-1:0] atan_m(input integer k);
+    case (k)
+      0:atan_m=16'd8192; 1:atan_m=16'd4836; 2:atan_m=16'd2555; 3:atan_m=16'd1297;
+      4:atan_m=16'd651;  5:atan_m=16'd326;  6:atan_m=16'd163;  7:atan_m=16'd81;
+      8:atan_m=16'd41;   9:atan_m=16'd20;  10:atan_m=16'd10;  11:atan_m=16'd5;
+      12:atan_m=16'd3;  13:atan_m=16'd1;  14:atan_m=16'd1;    default: atan_m=16'd0;
     endcase
   endfunction
 
-  // CORDIC algorithm for first quadrant: approximate cos and sin with ever smaller rotations
-  
+  // rescale a WMAX-bit constant down to W bits (rounded); constant-folds at elaboration
+  function signed [W-1:0] rescale(input [WMAX-1:0] m);
+    rescale = (SH == 0) ? m[W-1:0] : ((m + (1 << (SH-1))) >> SH);
+  endfunction
+
+  reg signed [W-1:0] x, xn, y, z, c_full, s_full;
+  reg [1:0] quad;
   integer k;
-  localparam signed [6:0] GAIN = 7'd19;
 
   always @(*) begin
-      quad = phase_acc[N_ACC-1: N_ACC-2];
-      z = phase_acc[N_ACC - 3: N_ACC - 7];
-      y = '0;
-      x = GAIN;  // Pre-compensates for CORDIC gain
-
-      for (k = 0; k < N_ITER; k = k + 1) begin
-        if (z >= 0) begin
-          xn = x - (y >>> k);
-          y = y + (x >>> k);
-          x = xn;
-          z = z - atan_lut(k);
-        end
-        else begin
-          xn = x + (y >>> k);
-          y = y - (x >>> k);
-          x = xn;
-          z = z + atan_lut(k);
-        end
+    quad = phase_acc[PW-1 -: 2];            // top 2 bits -> quadrant
+    z    = phase_acc[PW-3 -: (W-2)];        // next W-2 bits -> in-quadrant residual
+    x    = rescale(GAIN_M);                 // 1/K gain seed
+    y    = '0;
+    for (k = 0; k < NITER; k = k + 1) begin
+      if (z >= 0) begin
+        xn = x - (y >>> k); y = y + (x >>> k); x = xn; z = z - rescale(atan_m(k));
+      end else begin
+        xn = x + (y >>> k); y = y - (x >>> k); x = xn; z = z + rescale(atan_m(k));
       end
-
-    // Fold quadrants 2-4 to first by flipping and adjusting signs.
-
-    case(quad)
-      2'd0: begin c_full = x; s_full = y; end
-      2'd1: begin c_full = -y; s_full = x; end
+    end
+    case (quad)                             // lift first quadrant to the full circle
+      2'd0: begin c_full =  x; s_full =  y; end
+      2'd1: begin c_full = -y; s_full =  x; end
       2'd2: begin c_full = -x; s_full = -y; end
-      2'd3: begin c_full = y; s_full = -x; end
+      2'd3: begin c_full =  y; s_full = -x; end
     endcase
   end
 
-  always @(posedge clk) begin // Register the result
-    if (!rst_n) begin
-      sine <= '0;
-      cosine <= '0;
-    end
-    else begin
-      sine <= s_full;
-      cosine <= c_full;
-    end
+  always @(posedge clk) begin               // register the result
+    if (!rst_n) begin sine <= '0; cosine <= '0; end
+    else        begin sine <= s_full; cosine <= c_full; end
   end
-  
+endmodule
+
+// Format a signed Q2.(SW-2) sample to OW-bit offset-binary:
+// scale amplitude 1.0 (=2^(SW-2)) to near full OW-scale, round, saturate, flip MSB.
+// SHIFT = (SW-2) frac bits -> (OW-1) frac bits  = SW-OW-1.
+module sample_to_ob #(
+  parameter integer SW    = 12,
+  parameter integer OW    = 7,
+  parameter integer SHIFT = SW - OW - 1
+) (
+  input  wire signed [SW-1:0] s,
+  output wire        [OW-1:0] ob
+);
+  // SHIFT>=0 narrows (round + right shift); SHIFT<0 widens (left shift, scale up).
+  // Constants are declared signed so the arithmetic stays signed -- a bare unsigned
+  // literal would make the whole expression unsigned and turn >>> into a logical shift.
+  localparam integer       RSH = (SHIFT > 0) ? SHIFT  : 0;   // narrow: right shift amount
+  localparam integer       LSH = (SHIFT < 0) ? -SHIFT : 0;   // widen : left shift amount
+  localparam signed [SW:0] RND = (SHIFT > 0) ? (1 <<< (SHIFT-1)) : 0;   // +1/2 LSB
+  localparam signed [OW:0] HI  =  (1 <<< (OW-1)) - 1;                   // +max
+  localparam signed [OW:0] LO  = -(1 <<< (OW-1));                       // -min
+
+  wire signed [SW+LSH:0] s_sc = (($signed(s) + RND) >>> RSH) <<< LSH;   // round + rescale
+  reg  signed [OW-1:0] s_sat;
+  always @(*) begin
+    if      (s_sc > HI) s_sat = HI[OW-1:0];          // saturate high
+    else if (s_sc < LO) s_sat = LO[OW-1:0];          // saturate low
+    else                s_sat = s_sc[OW-1:0];
+  end
+  assign ob = {~s_sat[OW-1], s_sat[OW-2:0]};         // signed -> offset-binary (mid = 2^(OW-1))
 endmodule
