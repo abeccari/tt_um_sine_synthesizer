@@ -242,7 +242,7 @@ endmodule
 module cordic #(
   parameter integer PW    = 20,   // phase accumulator width (full turn = 2^PW)
   parameter integer W     = 12,   // datapath width, Q2.(W-2)
-  parameter integer NITER = 9     // rotation stages (~7 effective bits at W=12)
+  parameter integer NITER = 8     // rotation stages
 )(
   input  wire                clk,
   input  wire                rst_n,
