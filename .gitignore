@@ -13,6 +13,7 @@ test/sim_build
 test/__pycache__/
 test/results.xml
 test/gate_level_netlist.v
+test/waves/
 test_dsm/*
 test_cocotb/*
 .venv/

@@ -10,6 +10,8 @@ find-libpython==0.5.1
     # via cocotb
 iniconfig==2.3.0
     # via pytest
+numpy==2.5.1
+    # via tt-um-abeccari-swsynth
 packaging==26.2
     # via pytest
 pluggy==1.6.0
