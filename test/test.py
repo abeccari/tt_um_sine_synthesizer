@@ -253,7 +253,7 @@ async def test_sine_cos(dut):
 
         # waveform + spectrum for visual inspection (opt-in via PLOT_WAVES)
         if plot:
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 9))
             show = min(len(s), int(3 * period) + 2)
             ax1.plot(s[:show], ".-", label="sine"); ax1.plot(c[:show], ".-", label="cos")
             ax1.set(title=f"note {note} oct {octv} (f={f_ideal:.1f} Hz)",
@@ -261,12 +261,117 @@ async def test_sine_cos(dut):
             ax2.plot(freq, 20 * np.log10(spec / spec.max() + 1e-12))
             ax2.axvline(f_ideal, color="r", ls="--", lw=0.8)
             ax2.set(xlabel="Hz", ylabel="dB", ylim=(-80, 5)); ax2.grid(True)
+            r2 = s ** 2 + c ** 2                             # CORDIC magnitude^2 (should be flat)
+            ax3.plot(r2, ".-", lw=0.8)
+            ax3.axhline(r2.mean(), color="r", ls="--", lw=0.8, label=f"mean {r2.mean():.0f}")
+            ax3.set(title="sin² + cos²  (CORDIC magnitude²)", xlabel="sample",
+                    ylabel="code²"); ax3.legend(); ax3.grid(True)
             fig.tight_layout(); fig.savefig(os.path.join(outdir, f"note{note}_oct{octv}.png"), dpi=90)
             plt.close(fig)
 
 
 @cocotb.test()
 async def test_pdm_audio(dut):
-    pass    # TODO: low-pass the PDM stream (uo_out[7]) and check it reconstructs the sine
+    """Capture the 1-bit PDM stream (uo_out[7]) at the full clock, low-pass it at
+    24 kHz, and check the recovered tone: centre frequency and in-band SFDR.
+    (Amplitude is arbitrary after filtering, so it's not asserted.)"""
+    import os
+    import numpy as np
+
+    plot = os.environ.get("PLOT_WAVES", "").lower() in ("1", "true", "yes", "on")
+    if plot:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        outdir = os.path.join(os.path.dirname(__file__), "waves")
+        os.makedirs(outdir, exist_ok=True)
+
+    await start_and_reset(dut)
+
+    N     = 1 << 15          # clocks captured (>= 10 periods for octave-8 notes)
+    FC    = 24_000           # low-pass cutoff = Nyquist of the 48 kHz audio band
+    NTAPS = 1023             # windowed-sinc FIR length
+    cases = ((0, 8), (4, 8))
+
+    # FIR low-pass kernel (numpy only), reused across cases
+    n  = np.arange(NTAPS) - (NTAPS - 1) / 2
+    h  = np.sinc(2 * FC / CLK_HZ * n) * np.hamming(NTAPS)
+    h /= h.sum()
+
+    def band_metrics(sig):
+        """Peak frequency and SFDR within the audio band [0, FC]."""
+        w    = np.hanning(N)
+        spec = np.abs(np.fft.rfft((sig - sig.mean()) * w))
+        fr   = np.fft.rfftfreq(N, d=1 / CLK_HZ)
+        spec[fr > FC] = 0.0
+        spec[0] = 0.0
+        k = int(np.argmax(spec))
+        sp = spec.copy(); sp[max(1, k - 3):k + 4] = 0.0
+        return fr[k], 20 * np.log10(spec[k] / max(sp.max(), 1e-9))
+
+    for note, octv in cases:
+        oct_eff  = min(octv, MAX_OCT)
+        note_eff = note if note < 12 else 0
+        f_ideal  = 27.5 * 2 ** (note_eff / 12) * 2 ** oct_eff
+
+        dut.ui_in.value = (octv << 4) | note          # reset with note applied
+        dut.rst_n.value = 0
+        await ClockCycles(dut.clk, 4)
+        dut.rst_n.value = 1
+        await RisingEdge(dut.clk)
+        await ClockCycles(dut.clk, 4 * DIV)           # let the DSM/CORDIC settle
+
+        # capture the 1-bit PDM output on every clock
+        bits = np.empty(N, dtype=np.int8)
+        for i in range(N):
+            await RisingEdge(dut.clk)
+            bits[i] = (int(dut.uo_out.value) >> 7) & 1
+        x = bits.astype(float) * 2.0 - 1.0            # 0/1 -> -1/+1
+        y = np.convolve(x, h, mode="same")            # low-pass -> recovered tone
+
+        f_pre,  sfdr_pre  = band_metrics(x)
+        f_post, sfdr_post = band_metrics(y)
+        binw = CLK_HZ / N
+
+        dut._log.info(f"note {note} oct {octv} (f={f_ideal:7.1f}): "
+                      f"raw fpk={f_pre:7.1f} SFDR={sfdr_pre:5.1f}dB | "
+                      f"filt fpk={f_post:7.1f} SFDR={sfdr_post:5.1f}dB")
+
+        # checks on the FILTERED signal
+        assert abs(f_post - f_ideal) < 2 * binw, (
+            f"note {note} oct {octv}: filtered peak {f_post:.0f} Hz vs ideal "
+            f"{f_ideal:.0f} (bin {binw:.0f})"
+        )
+        assert sfdr_post > 30, f"note {note} oct {octv}: filtered SFDR {sfdr_post:.1f} dB"
+
+        if plot:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 7))
+            # Zoom around a rising zero-crossing of the recovered sine, so the window is
+            # centred on 0 and shows the PDM density sweeping through 0.5. Individual
+            # bits stay visible instead of the full-rate blur.
+            amp = np.abs(y).max()
+            lo, hi = NTAPS, N - NTAPS                        # skip FIR edge transients
+            seg = y[lo:hi] - y[lo:hi].mean()
+            zc  = np.where((seg[:-1] <= 0) & (seg[1:] > 0))[0]   # rising crossings
+            idx = lo + int(zc[len(zc) // 2]) if len(zc) else (lo + hi) // 2
+            a = max(lo, idx - 150); b = min(hi, idx + 150)   # ~300-clock window
+            t = np.arange(a, b) - idx                        # x-axis relative to the crossing
+            ax1.step(t, x[a:b], where="mid", alpha=0.5, label="raw PDM (±1)")
+            ax1.plot(t, y[a:b] / amp, lw=1.8, color="C1", label="low-pass (normalised)")
+            ax1.set(title=f"note {note} oct {octv}  f={f_ideal:.0f} Hz  (zoom @ zero-crossing)",
+                    xlabel="clock cycle (rel. to crossing)", ylabel="level"); ax1.legend(); ax1.grid(True)
+
+            fr = np.fft.rfftfreq(N, d=1 / CLK_HZ); w = np.hanning(N)
+            Sx = np.abs(np.fft.rfft((x - x.mean()) * w))
+            Sy = np.abs(np.fft.rfft((y - y.mean()) * w))
+            ref = Sx.max()
+            ax2.semilogx(fr[1:], 20 * np.log10(Sx[1:] / ref + 1e-12), label="raw", alpha=0.8)
+            ax2.semilogx(fr[1:], 20 * np.log10(Sy[1:] / ref + 1e-12), label="filtered")
+            ax2.axvline(FC, color="k", ls=":", lw=0.9)
+            ax2.axvline(f_ideal, color="r", ls="--", lw=0.8)
+            ax2.set(xlabel="Hz", ylabel="dB", ylim=(-100, 5)); ax2.legend(); ax2.grid(True, which="both")
+            fig.tight_layout()
+            fig.savefig(os.path.join(outdir, f"pdm_note{note}_oct{octv}.png"), dpi=90)
+            plt.close(fig)
     pass
         
