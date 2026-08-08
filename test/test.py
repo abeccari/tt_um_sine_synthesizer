@@ -9,6 +9,7 @@ Pinout (see src/project.v):
 """
 
 import math
+import os
 
 import cocotb
 from cocotb.clock import Clock
@@ -17,6 +18,10 @@ from cocotb.triggers import RisingEdge, ClockCycles
 CLK_HZ = 12_288_000            # 12.288 MHz system clock
 CLK_PS = round(1e9 / CLK_HZ)  # clock period in ns (~81.380)
 DIV    = 256                   # sample-rate divider -> f_s = clk / 256 = 48 kHz
+
+# Gate-level sim runs the synthesised netlist, where RTL nets (phase_acc,
+# phase_inc) no longer exist -- skip the whitebox tests that peek at internals.
+GL = os.getenv("GATES") == "yes"
 
 
 async def start_and_reset(dut):
@@ -30,7 +35,7 @@ async def start_and_reset(dut):
     dut.rst_n.value  = 1
     await RisingEdge(dut.clk)
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_reset(dut):
     """Asserting rst_n mid-operation forces the design back to its reset state."""
     await start_and_reset(dut)
@@ -116,7 +121,7 @@ async def step_one_sample(dut):
     return int(dut.user_project.phase_acc.value)
 
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_nco_period(dut):
     """Phase accumulator wraps at the frequency the freq map dictates, for note 0
     across octaves 0..8 and every note in the lowest (0) and highest (8) octave."""
@@ -258,7 +263,7 @@ async def test_sine_cos(dut):
             ax1.plot(s[:show], ".-", label="sine"); ax1.plot(c[:show], ".-", label="cos")
             ax1.set(title=f"note {note} oct {octv} (f={f_ideal:.1f} Hz)",
                     xlabel="sample", ylabel="code"); ax1.legend(); ax1.grid(True)
-            ax2.plot(freq, 20 * np.log10(spec / spec.max() + 1e-12))
+            ax2.semilogx(freq, 20 * np.log10(spec / spec.max() + 1e-12))
             ax2.axvline(f_ideal, color="r", ls="--", lw=0.8)
             ax2.set(xlabel="Hz", ylabel="dB", ylim=(-80, 5)); ax2.grid(True)
             r2 = s ** 2 + c ** 2                             # CORDIC magnitude^2 (should be flat)

@@ -51,3 +51,11 @@ export PLOT_WAVES
 
 # include cocotb's make rules to take care of the simulator setup
 include $(shell cocotb-config --makefiles)/Makefile.sim
+
+# Render a tone to a .wav so you can listen to it (separate, on-demand -- not part
+# of the normal test run). Config via env vars, e.g.:
+#   uv run make wav
+#   WAV_NOTE=7 WAV_OCT=8 WAV_SECONDS=5 uv run make wav
+.PHONY: wav
+wav:
+	$(MAKE) COCOTB_TEST_MODULES=wav_export

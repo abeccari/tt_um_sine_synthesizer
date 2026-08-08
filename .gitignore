@@ -3,6 +3,7 @@
 *.vcd
 *.fst
 *.fst.hier
+*.wav
 parser.out
 parsetab.py
 runs
