@@ -106,7 +106,7 @@ module tt_um_abeccari_swsynth (
 
   wire signed [SW-1:0] sine_s, cos_s; // signed CORDIC outputs, Q2.(SW-2)
 
-  cordic #(.PW(N_ACC), .W(SW)) u_cordic (   // NITER defaults to 6
+  cordic #(.PW(N_ACC), .W(SW)) u_cordic (
     .clk(clk),
     .rst_n(rst_n),
     .phase_acc(phase_acc),
@@ -242,7 +242,7 @@ endmodule
 module cordic #(
   parameter integer PW    = 20,   // phase accumulator width (full turn = 2^PW)
   parameter integer W     = 12,   // datapath width, Q2.(W-2)
-  parameter integer NITER = 6     // rotation stages (~7 effective bits at W=12)
+  parameter integer NITER = 9     // rotation stages (~7 effective bits at W=12)
 )(
   input  wire                clk,
   input  wire                rst_n,
@@ -264,14 +264,23 @@ module cordic #(
     endcase
   endfunction
 
-  // rescale a WMAX-bit constant down to W bits (rounded); constant-folds at elaboration
+  // rescale a WMAX-bit constant down to W bits (rounded); constant-folds at elaboration.
+  // Round in WMAX bits (sized '1' avoids a 32-bit literal), then narrow explicitly to W.
   function signed [W-1:0] rescale(input [WMAX-1:0] m);
-    rescale = (SH == 0) ? m[W-1:0] : ((m + (1 << (SH-1))) >> SH);
+    reg [WMAX-1:0] mr;
+    begin
+      mr      = (SH == 0) ? m : ((m + (WMAX'(1) << (SH-1))) >> SH);
+      rescale = mr[W-1:0];
+    end
   endfunction
 
   reg signed [W-1:0] x, xn, y, z, c_full, s_full;
   reg [1:0] quad;
   integer k;
+
+  // phase_acc[PW-1:PW-2]=quadrant, [PW-3 -: W-2]=residual. The low PW-W bits are
+  // sub-angle precision the coarse W-bit rotator intentionally discards.
+  wire _unused_lsb = &{1'b0, phase_acc[PW-W-1:0]};
 
   always @(*) begin
     quad = phase_acc[PW-1 -: 2];            // top 2 bits -> quadrant
