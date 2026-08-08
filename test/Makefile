@@ -32,12 +32,18 @@ endif
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
 
+# project.v uses SystemVerilog constructs ('0, signed functions), so Icarus needs -g2012.
+COMPILE_ARGS 		+= -g2012
+
 # Include the testbench sources:
 VERILOG_SOURCES += $(PWD)/tb.v
 TOPLEVEL = tb
 
 # List test modules to run, separated by commas and without the .py suffix:
 COCOTB_TEST_MODULES = test
+
+# Customize cocotb's log prefix
+export COCOTB_LOG_PREFIX = {record.levelname:<16}
 
 # include cocotb's make rules to take care of the simulator setup
 include $(shell cocotb-config --makefiles)/Makefile.sim

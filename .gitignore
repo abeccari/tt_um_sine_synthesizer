@@ -3,6 +3,8 @@
 *.vcd
 *.fst
 *.fst.hier
+parser.out
+parsetab.py
 runs
 tt_submission
 src/user_config.json
