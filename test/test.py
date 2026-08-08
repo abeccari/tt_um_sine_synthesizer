@@ -193,9 +193,9 @@ async def test_sine_cos(dut):
     import os
     import numpy as np
 
-    # Waveform PNGs are opt-in (set SW_PLOT=1 locally). This keeps matplotlib off
-    # the CI critical path -- CI runs the numeric checks and never imports it.
-    plot = bool(os.environ.get("SW_PLOT"))
+    # Waveform PNGs are opt-in: run `make PLOT_WAVES=1`. Keeps matplotlib off the
+    # CI path -- CI runs the numeric checks and never imports it.
+    plot = os.environ.get("PLOT_WAVES", "").lower() in ("1", "true", "yes", "y", "on")
     if plot:
         import matplotlib
         matplotlib.use("Agg")
@@ -251,7 +251,7 @@ async def test_sine_cos(dut):
         dut._log.info(f"note {note:2d} oct {octv}: f_pk={f_pk:8.1f} Hz (ideal {f_ideal:8.1f}) "
                       f"amp={amp:.0f} SFDR={sfdr:.1f}dB ripple={ripple*100:.1f}%")
 
-        # waveform + spectrum for visual inspection (opt-in via SW_PLOT)
+        # waveform + spectrum for visual inspection (opt-in via PLOT_WAVES)
         if plot:
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
             show = min(len(s), int(3 * period) + 2)

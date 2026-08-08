@@ -45,5 +45,9 @@ COCOTB_TEST_MODULES = test
 # Customize cocotb's log prefix
 export COCOTB_LOG_PREFIX = {record.levelname:<16}
 
+# Optional waveform PNGs: run `make PLOT_WAVES=1` (needs matplotlib: uv sync --extra plot).
+# `export` makes the command-line value visible to the cocotb (Python) process.
+export PLOT_WAVES
+
 # include cocotb's make rules to take care of the simulator setup
 include $(shell cocotb-config --makefiles)/Makefile.sim

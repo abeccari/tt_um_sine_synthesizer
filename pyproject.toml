@@ -8,10 +8,10 @@ requires-python = ">=3.10,<3.14"
 dependencies = [
     "pytest==8.4.2",
     "cocotb==2.0.1",
-    "numpy>=2.0",
+    "numpy>=1.26,<2.5",
 ]
 
-# matplotlib is only needed for local waveform plots (run tests with SW_PLOT=1).
+# matplotlib is only needed for local waveform plots (run tests with PLOT_WAVES=1).
 # It's an optional extra so CI stays lean. Install locally: uv sync --extra plot
 [project.optional-dependencies]
 plot = ["matplotlib>=3.10.9"]
