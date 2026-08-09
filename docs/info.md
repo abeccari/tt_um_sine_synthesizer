@@ -27,7 +27,7 @@ Semitone codes on `ui[3:0]` (codes 12–15 have no distinct note and fold back t
 
 The clock is 12.288 MHz = 256 × 48 kHz.
 
-![Parallel 7-bit sine output (top) and its spectrum (bottom), note C#, octave 8 ≈ 8.87 kHz](note4_oct8.png)
+<img src="note4_oct8.png" width="360" alt="Parallel 7-bit sine output (top) and its spectrum (bottom), note C#, octave 8 ≈ 8.87 kHz">
 
 ## How to test
 
