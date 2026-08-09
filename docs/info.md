@@ -7,6 +7,8 @@ sections. Images live in this folder; each must be < 512 kB and all together < 1
 
 `tt_um_abeccari_swsynth` is a **CORDIC sine-wave synthesizer**: it plays an equal-tempered musical note as an audio tone. You choose the pitch on the input pins, and the tone comes out three ways — a parallel digital sample bus and two 1-bit pulse-density-modulated (PDM) streams.
 
+![GDS layout assembled with IHP PDK.](tile_gds_wip.png)
+
 Signal chain:
 
 1. **Note select** — `ui[3:0]` picks a semitone (see the table below) and `ui[7:4]` an octave above A0 = 27.5 Hz. The output frequency is `f = 27.5 · 2^(note/12) · 2^octave` Hz, with the octave clamped to ≤ 8 so the tone stays below the Nyquist rate.
