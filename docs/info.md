@@ -31,7 +31,7 @@ The clock is 12.288 MHz = 256 × 48 kHz.
 
 ## How to test
 
-1. **Clock** — drive `clk` at the 12.288 MHz design point; the pitch and 48 kHz sample rate scale with it (`f_s = clk / 256`), and being fully synchronous it also runs correctly at lower rates. Don't exceed 50 MHz (the demo board's clock ceiling and a safe process limit) — the CORDIC critical path sets the true maximum, so stay near 12.288 MHz unless timing has been checked at a higher rate.
+1. **Clock** — drive `clk` at the 12.288 MHz design point; the pitch and 48 kHz sample rate scale with it (`f_s = clk / 256`), and being fully synchronous it also runs correctly at lower rates. Clocks up to ~60 MHz are within the process corners (worst-case Fmax ≈ 66 MHz at the slow corner, from signoff STA); the demo board's on-board clock tops out at 50 MHz, which the design meets with margin, so drive `clk` externally to go higher.
 2. **Reset** — hold `rst_n` low for a few clock cycles, then release it high.
 3. **Pick a note** — set `ui[7:4]` = octave and `ui[3:0]` = semitone. For example `ui_in = 0x40` → octave 4, note 0 (A) → **440 Hz** (concert A); `ui_in = 0x80` → note A, octave 8 → 7040 Hz.
 4. **Monitor** —
