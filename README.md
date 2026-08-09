@@ -4,6 +4,8 @@
 
 # Sine Wave Synthesizer — Tiny Tapeout IHP 26b
 
+[![Made with Claude](https://img.shields.io/badge/Made%20with-Claude-D97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
+
 A **CORDIC sine-wave synthesizer** for the Tiny Tapeout IHP 26b shuttle (IHP SG13G2, 130 nm). It plays an equal-tempered musical note as an audio tone, selected from the input pins, and emits it three ways: a 7-bit parallel sample bus and two 1-bit pulse-density-modulated (PDM) streams — sine and cosine, 90° apart — for direct analog reconstruction and I/Q experiments.
 
 - [Datasheet page](docs/info.md)
