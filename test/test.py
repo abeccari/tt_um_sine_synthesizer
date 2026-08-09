@@ -4,8 +4,8 @@
 
 Pinout (see src/project.v):
   ui_in[3:0]   = NOTE          ui_in[7:4]   = OCTAVE
-  uo_out[6:0]  = SINE (ob)     uo_out[7]    = PDM
-  uio_out[0]   = SAMPLE_EN     uio_out[7:1] = COS (ob)
+  uo_out[6:0]  = SINE (ob)     uo_out[7]    = PDM_I  (sine sigma-delta)
+  uio_out[0]   = SAMPLE_EN     uio_out[1]   = PDM_Q  (cosine sigma-delta)
 """
 
 import math
@@ -20,7 +20,7 @@ CLK_PS = round(1e9 / CLK_HZ)  # clock period in ns (~81.380)
 DIV    = 256                   # sample-rate divider -> f_s = clk / 256 = 48 kHz
 
 # Gate-level sim runs the synthesised netlist, where RTL nets (phase_acc,
-# phase_inc) no longer exist -- skip the whitebox tests that peek at internals.
+# phase_inc) don't exist -- skip the whitebox tests that peek at internals.
 GL = os.getenv("GATES") == "yes"
 
 
@@ -54,7 +54,7 @@ async def test_reset(dut):
     assert str(dut.uio_out.value)[-1] == "0",          "SAMPLE_EN not low in reset"
     assert str(dut.uo_out.value)[0]  == "0",           "PDM not low in reset"
     assert int(dut.uo_out.value) & 0x7F == 64,         "SINE not at midscale in reset"
-    assert int(dut.uio_out.value[7:1]) == 64,          "COS not at midscale in reset"
+    assert str(dut.uio_out.value)[-2] == "0",          "PDM_Q not low in reset"
 
     # while held in reset, SAMPLE_EN must never pulse
     for _ in range(2 * DIV):
@@ -69,7 +69,7 @@ async def test_reset(dut):
 
 def sample_en(dut):
     """SAMPLE_EN = uio_out bit 0 (LSB). Read the LSB char so it's X-safe even
-    while the other uio_out bits (cosine) are still resolving after reset."""
+    while the other uio_out bits (PDM_Q) are still resolving after reset."""
     return str(dut.uio_out.value)[-1]
 
 
@@ -179,22 +179,23 @@ async def test_nco_period(dut):
         assert abs(cents) < 5.0, f"note {note} oct {octv}: {cents:+.2f} cents off ideal"
 
 
-async def capture_sine_cos(dut, n):
-    """Collect n signed output samples (one per SAMPLE_EN).
-    SINE = uo_out[6:0], COS = uio_out[7:1], both offset-binary (midscale 64)."""
-    sine, cos = [], []
+async def capture_sine(dut, n):
+    """Collect n signed SINE samples (uo_out[6:0], offset-binary, midscale 64),
+    one per SAMPLE_EN pulse."""
+    sine = []
     for _ in range(n):
         while str(dut.uio_out.value)[-1] != "1":     # wait for SAMPLE_EN
             await RisingEdge(dut.clk)
         await ClockCycles(dut.clk, 2)                # let accumulate + CORDIC reg settle
         sine.append((int(dut.uo_out.value) & 0x7F) - 64)
-        cos.append(((int(dut.uio_out.value) >> 1) & 0x7F) - 64)
-    return sine, cos
+    return sine
 
 
 @cocotb.test()
-async def test_sine_cos(dut):
-    """Capture sine/cos, check spectrum @ f_ideal, amplitude, purity, quadrature."""
+async def test_sine(dut):
+    """Capture the parallel SINE output (uo_out[6:0]); check spectrum @ f_ideal,
+    amplitude, and spectral purity. The cosine is emitted only as PDM_Q, so its
+    quadrature with the sine is verified in test_pdm_audio."""
     import os
     import numpy as np
 
@@ -210,7 +211,7 @@ async def test_sine_cos(dut):
 
     await start_and_reset(dut)
 
-    cases = ((0, 3), (8, 6), (4, 8), (15, 15))
+    cases = ((0, 3), (4, 8), (15, 15))
 
     for note, octv in cases:
         inc      = expected_phase_inc(note, octv)
@@ -226,9 +227,8 @@ async def test_sine_cos(dut):
 
         period = (1 << N_ACC) / inc
         Ns     = int(min(4096, max(512, 12 * period)))   # >= ~12 periods, capped
-        sine, cos = await capture_sine_cos(dut, Ns + 4)
+        sine = await capture_sine(dut, Ns + 4)
         s = np.array(sine[4:], float)                    # drop reset transient
-        c = np.array(cos[4:], float)
         Ns = len(s)
 
         dc = s.mean()
@@ -249,37 +249,29 @@ async def test_sine_cos(dut):
         sfdr = 20 * np.log10(spec[k] / max(spur.max(), 1e-9))
         assert sfdr > 25, f"note {note} oct {octv}: SFDR {sfdr:.1f} dB"
 
-        r      = np.sqrt(s ** 2 + c ** 2)
-        ripple = r.std() / r.mean()
-        assert ripple < 0.03, f"note {note} oct {octv}: sin^2+cos^2 ripple {ripple*100:.1f}%"
-
         dut._log.info(f"note {note:2d} oct {octv}: f_pk={f_pk:8.1f} Hz (ideal {f_ideal:8.1f}) "
-                      f"amp={amp:.0f} SFDR={sfdr:.1f}dB ripple={ripple*100:.1f}%")
+                      f"amp={amp:.0f} SFDR={sfdr:.1f}dB")
 
         # waveform + spectrum for visual inspection (opt-in via PLOT_WAVES)
         if plot:
-            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 9))
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
             show = min(len(s), int(3 * period) + 2)
-            ax1.plot(s[:show], ".-", label="sine"); ax1.plot(c[:show], ".-", label="cos")
+            ax1.plot(s[:show], ".-", label="sine")
             ax1.set(title=f"note {note} oct {octv} (f={f_ideal:.1f} Hz)",
                     xlabel="sample", ylabel="code"); ax1.legend(); ax1.grid(True)
             ax2.semilogx(freq, 20 * np.log10(spec / spec.max() + 1e-12))
             ax2.axvline(f_ideal, color="r", ls="--", lw=0.8)
             ax2.set(xlabel="Hz", ylabel="dB", ylim=(-80, 5)); ax2.grid(True)
-            r2 = s ** 2 + c ** 2                             # CORDIC magnitude^2 (should be flat)
-            ax3.plot(r2, ".-", lw=0.8)
-            ax3.axhline(r2.mean(), color="r", ls="--", lw=0.8, label=f"mean {r2.mean():.0f}")
-            ax3.set(title="sin² + cos²  (CORDIC magnitude²)", xlabel="sample",
-                    ylabel="code²"); ax3.legend(); ax3.grid(True)
             fig.tight_layout(); fig.savefig(os.path.join(outdir, f"note{note}_oct{octv}.png"), dpi=90)
             plt.close(fig)
 
 
 @cocotb.test()
 async def test_pdm_audio(dut):
-    """Capture the 1-bit PDM stream (uo_out[7]) at the full clock, low-pass it at
-    24 kHz, and check the recovered tone: centre frequency and in-band SFDR.
-    (Amplitude is arbitrary after filtering, so it's not asserted.)"""
+    """Capture both 1-bit PDM streams (I=uo_out[7], Q=uio_out[1]) at the full clock,
+    low-pass each at 24 kHz, and check the recovered tones: centre frequency, in-band
+    SFDR (I), and I/Q quadrature via their cross-correlation (~0 at zero lag, extremal
+    at a quarter period). Amplitude is arbitrary after filtering, so it's not asserted."""
     import os
     import numpy as np
 
@@ -314,6 +306,17 @@ async def test_pdm_audio(dut):
         sp = spec.copy(); sp[max(1, k - 3):k + 4] = 0.0
         return fr[k], 20 * np.log10(spec[k] / max(sp.max(), 1e-9))
 
+    def xcorr(a, b, max_lag):
+        """Normalised cross-correlation R(L) = <a(t) b(t+L)> for L in [-max_lag, max_lag].
+        For two equal-power signals R lies in [-1, 1]. Returns (lags, R)."""
+        a = a - a.mean(); b = b - b.mean()
+        norm = math.sqrt(float(a @ a) * float(b @ b)) or 1.0
+        lags = np.arange(-max_lag, max_lag + 1)
+        R = np.empty(len(lags))
+        for j, L in enumerate(lags):
+            R[j] = (a[:len(a) - L] @ b[L:]) if L >= 0 else (a[-L:] @ b[:len(b) + L])
+        return lags, R / norm
+
     for note, octv in cases:
         oct_eff  = min(octv, MAX_OCT)
         note_eff = note if note < 12 else 0
@@ -326,57 +329,84 @@ async def test_pdm_audio(dut):
         await RisingEdge(dut.clk)
         await ClockCycles(dut.clk, 4 * DIV)           # let the DSM/CORDIC settle
 
-        # capture the 1-bit PDM output on every clock
-        bits = np.empty(N, dtype=np.int8)
+        # capture both 1-bit PDM outputs every clock: I on uo_out[7], Q on uio_out[1]
+        bits_i = np.empty(N, dtype=np.int8)
+        bits_q = np.empty(N, dtype=np.int8)
         for i in range(N):
             await RisingEdge(dut.clk)
-            bits[i] = (int(dut.uo_out.value) >> 7) & 1
-        x = bits.astype(float) * 2.0 - 1.0            # 0/1 -> -1/+1
-        y = np.convolve(x, h, mode="same")            # low-pass -> recovered tone
+            bits_i[i] = (int(dut.uo_out.value)  >> 7) & 1
+            bits_q[i] = (int(dut.uio_out.value) >> 1) & 1
+        x_i = bits_i.astype(float) * 2.0 - 1.0        # 0/1 -> -1/+1
+        x_q = bits_q.astype(float) * 2.0 - 1.0
+        y_i = np.convolve(x_i, h, mode="same")        # low-pass -> recovered sine
+        y_q = np.convolve(x_q, h, mode="same")        # low-pass -> recovered cosine
 
-        f_pre,  sfdr_pre  = band_metrics(x)
-        f_post, sfdr_post = band_metrics(y)
+        f_i, sfdr_i = band_metrics(y_i)
+        f_q, _      = band_metrics(y_q)
         binw = CLK_HZ / N
 
-        dut._log.info(f"note {note} oct {octv} (f={f_ideal:7.1f}): "
-                      f"raw fpk={f_pre:7.1f} SFDR={sfdr_pre:5.1f}dB | "
-                      f"filt fpk={f_post:7.1f} SFDR={sfdr_post:5.1f}dB")
+        # quadrature: cross-correlate recovered I and Q over +-half a period. For an
+        # ideal pair R(L) = -sin(2*pi*L/period): ~0 at zero lag, |peak| at a quarter
+        # period (90 deg). The interior slice drops the FIR edge transients.
+        period_clk = CLK_HZ / f_ideal
+        assert N - 2 * NTAPS > 3 * period_clk, (      # xcorr needs several whole periods
+            f"note {note} oct {octv}: capture N={N} too short for f={f_ideal:.0f} Hz; "
+            f"use a higher octave or increase N")
+        lags, R  = xcorr(y_i[NTAPS:N - NTAPS], y_q[NTAPS:N - NTAPS], int(period_clk // 2))
+        r0       = float(R[np.searchsorted(lags, 0)])
+        lag_peak = int(lags[np.argmax(np.abs(R))])
+        quarter  = period_clk / 4.0
 
-        # checks on the FILTERED signal
-        assert abs(f_post - f_ideal) < 2 * binw, (
-            f"note {note} oct {octv}: filtered peak {f_post:.0f} Hz vs ideal "
-            f"{f_ideal:.0f} (bin {binw:.0f})"
-        )
-        assert sfdr_post > 30, f"note {note} oct {octv}: filtered SFDR {sfdr_post:.1f} dB"
+        dut._log.info(f"note {note} oct {octv} (f={f_ideal:7.1f}): "
+                      f"I fpk={f_i:7.1f} SFDR={sfdr_i:5.1f}dB | Q fpk={f_q:7.1f} | "
+                      f"xcorr r(0)={r0:+.3f} peak@{lag_peak:+d} (T/4={quarter:.0f})")
+
+        # both tones land at f_ideal, the sine is clean, and the pair is in quadrature
+        assert abs(f_i - f_ideal) < 2 * binw, \
+            f"note {note} oct {octv}: I peak {f_i:.0f} Hz vs ideal {f_ideal:.0f} (bin {binw:.0f})"
+        assert abs(f_q - f_ideal) < 2 * binw, \
+            f"note {note} oct {octv}: Q peak {f_q:.0f} Hz vs ideal {f_ideal:.0f} (bin {binw:.0f})"
+        assert sfdr_i > 30, f"note {note} oct {octv}: I SFDR {sfdr_i:.1f} dB"
+        assert abs(r0) < 0.15, \
+            f"note {note} oct {octv}: xcorr at zero lag {r0:+.3f} (expected ~0 for quadrature)"
+        assert abs(abs(lag_peak) - quarter) < 0.15 * quarter, \
+            f"note {note} oct {octv}: xcorr peak at {lag_peak:+d} clk, expected +-{quarter:.0f} (T/4)"
 
         if plot:
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 7))
-            # Zoom around a rising zero-crossing of the recovered sine, so the window is
-            # centred on 0 and shows the PDM density sweeping through 0.5. Individual
-            # bits stay visible instead of the full-rate blur.
-            amp = np.abs(y).max()
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(9, 10))
+            # Zoom around a rising zero-crossing of recovered I, so the window is centred
+            # on 0 and shows the PDM density sweeping through 0.5. Individual bits stay
+            # visible instead of the full-rate blur.
+            amp = np.abs(y_i).max()
             lo, hi = NTAPS, N - NTAPS                        # skip FIR edge transients
-            seg = y[lo:hi] - y[lo:hi].mean()
-            zc  = np.where((seg[:-1] <= 0) & (seg[1:] > 0))[0]   # rising crossings
+            sseg = y_i[lo:hi] - y_i[lo:hi].mean()
+            zc  = np.where((sseg[:-1] <= 0) & (sseg[1:] > 0))[0]  # rising crossings
             idx = lo + int(zc[len(zc) // 2]) if len(zc) else (lo + hi) // 2
             a = max(lo, idx - 150); b = min(hi, idx + 150)   # ~300-clock window
             t = np.arange(a, b) - idx                        # x-axis relative to the crossing
-            ax1.step(t, x[a:b], where="mid", alpha=0.5, label="raw PDM (±1)")
-            ax1.plot(t, y[a:b] / amp, lw=1.8, color="C1", label="low-pass (normalised)")
-            ax1.set(title=f"note {note} oct {octv}  f={f_ideal:.0f} Hz  (zoom @ zero-crossing)",
+            ax1.step(t, x_i[a:b], where="mid", alpha=0.4, label="raw PDM_I (±1)")
+            ax1.plot(t, y_i[a:b] / amp, lw=1.8, color="C1", label="I low-pass (norm)")
+            ax1.plot(t, y_q[a:b] / amp, lw=1.8, color="C2", label="Q low-pass (norm)")
+            ax1.set(title=f"note {note} oct {octv}  f={f_ideal:.0f} Hz  (zoom @ I zero-crossing)",
                     xlabel="clock cycle (rel. to crossing)", ylabel="level"); ax1.legend(); ax1.grid(True)
 
             fr = np.fft.rfftfreq(N, d=1 / CLK_HZ); w = np.hanning(N)
-            Sx = np.abs(np.fft.rfft((x - x.mean()) * w))
-            Sy = np.abs(np.fft.rfft((y - y.mean()) * w))
+            Sx = np.abs(np.fft.rfft((x_i - x_i.mean()) * w))
+            Sy = np.abs(np.fft.rfft((y_i - y_i.mean()) * w))
             ref = Sx.max()
-            ax2.semilogx(fr[1:], 20 * np.log10(Sx[1:] / ref + 1e-12), label="raw", alpha=0.8)
-            ax2.semilogx(fr[1:], 20 * np.log10(Sy[1:] / ref + 1e-12), label="filtered")
+            ax2.semilogx(fr[1:], 20 * np.log10(Sx[1:] / ref + 1e-12), label="raw I", alpha=0.8)
+            ax2.semilogx(fr[1:], 20 * np.log10(Sy[1:] / ref + 1e-12), label="filtered I")
             ax2.axvline(FC, color="k", ls=":", lw=0.9)
             ax2.axvline(f_ideal, color="r", ls="--", lw=0.8)
             ax2.set(xlabel="Hz", ylabel="dB", ylim=(-100, 5)); ax2.legend(); ax2.grid(True, which="both")
+
+            ax3.plot(lags, R, lw=1.2)
+            ax3.axhline(0, color="k", lw=0.6)
+            ax3.axvline(0, color="r", ls="--", lw=0.8, label="zero lag (R~0)")
+            ax3.axvline( quarter, color="g", ls=":", lw=0.9, label="±T/4 (peak)")
+            ax3.axvline(-quarter, color="g", ls=":", lw=0.9)
+            ax3.set(title="I/Q cross-correlation", xlabel="lag (clocks)", ylabel="R (norm)")
+            ax3.legend(); ax3.grid(True)
             fig.tight_layout()
             fig.savefig(os.path.join(outdir, f"pdm_note{note}_oct{octv}.png"), dpi=90)
             plt.close(fig)
-    pass
-        

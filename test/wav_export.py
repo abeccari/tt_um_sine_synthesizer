@@ -9,11 +9,11 @@ COCOTB_TEST_MODULES), so `make` never pays for it:
     WAV_NOTE=7 WAV_OCT=8 WAV_SECONDS=5 uv run make wav
 
 Rather than simulate several seconds of audio (tens of millions of clocks), it
-captures exactly one *seamless-loop period*: the number of 48 kHz samples until
-the phase accumulator returns to 0, i.e. an integer number of tone cycles. That
-1-bit PDM loop is low-pass filtered (circularly, so the loop stays periodic) and
-decimated to 48 kHz, then tiled to WAV_SECONDS. Because the loop is a whole
-number of cycles, the tile seam has no discontinuity. Output: test/tone_note<N>_oct<O>.wav
+captures a short chunk (~8 tone periods), low-pass filters and decimates the 1-bit
+PDM to 48 kHz, trims to a whole number of tone periods, and cross-fades the loop
+seam so tiling it up to WAV_SECONDS has no audible click. WAV_LPF=0 skips the
+reconstruction filter (naive decimation, deliberately aliased -- for A/B listening).
+Output: test/waves/tone_note<N>_oct<O>_<lpf|raw>.wav
 """
 import math
 import os

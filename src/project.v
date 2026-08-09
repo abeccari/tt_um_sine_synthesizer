@@ -7,29 +7,25 @@
  *   ui_in[3:0]   NOTE      : semitone within the octave (0=A .. 11=G#; 12-15 -> A)
  *   ui_in[7:4]   OCT       : octaves above A0 = 27.5 Hz (0-8, clamped below Nyquist)
  *   uo_out[6:0]  SINE      : 7-bit sine sample, OFFSET-BINARY (64 = zero-crossing)
- *   uo_out[7]    PDM       : 1-bit sigma-delta stream (TT Audio Pmod compatible)
+ *   uo_out[7]    PDM_I     : 1-bit sigma-delta stream of the sine   (clk rate)
  *   uio_out[0]   SAMPLE_EN : 48 kHz sample strobe (debug / scope trigger)
- *   uio_out[7:1] COS       : 7-bit cosine sample, OFFSET-BINARY (debug / quadrature)
+ *   uio_out[1]   PDM_Q     : 1-bit sigma-delta stream of the cosine (quadrature to PDM_I)
+ *   uio_out[7:2]           : unused (tied 0)
  *   clk                    : 12.288 MHz  (= 256 * 48 kHz sample rate)
  *   rst_n                  : active-low reset
  *
- * Pipeline (build each block below):
+ * Pipeline:
  *   FREQ -> [2FF sync] -> [freq map] -> phase_inc
  *                                         |
- *   sample_en (clk/256) -> [phase accumulator N=24] -> phase code
+ *   sample_en (clk/256) -> [phase accumulator N=20] -> phase code
  *                                         |
  *                          [CORDIC + quadrant fold] -> sin/cos (signed, W=12)
  *                                         |
- *                     +-------------------+-------------------+
- *                     v                                       v
- *        [round + saturate -> offset-binary]        [1st-order sigma-delta]
- *                     v                                       v
- *              sine_ob / cos_ob                            pdm_bit
- *
- * SCAFFOLD ONLY: the pin mapping is wired up; implement the numbered blocks.
- * Drive the four signals in the "signals you produce" section, and the outputs
- * fall into place. (Declared as wire -- change to reg if you drive them from an
- * always block.)
+ *          +------------------------------+------------------------------+
+ *          v                              v                              v
+ *   [sine -> offset-binary]     [sine -> sigma-delta]         [cos -> sigma-delta]
+ *          v                              v                              v
+ *      sine_ob (uo[6:0])           pdm_i (uo[7])                 pdm_q (uio[1])
  */
 
 `default_nettype none
@@ -56,8 +52,8 @@ module tt_um_abeccari_swsynth (
   // Signals
   // ---------------------------------------------------------------------------
   wire [OW-1:0] sine_ob;    // 7-bit sine,   offset-binary -> uo_out[6:0]
-  wire          pdm_bit;    // 1-bit sigma-delta           -> uo_out[7]
-  wire [OW-1:0] cos_ob;     // 7-bit cosine, offset-binary -> uio_out[7:1]
+  wire          pdm_i;    // 1-bit sigma-delta           -> uo_out[7]
+  wire          pdm_q;    // 1-bit sigma-delta           -> uio_out[1]
   wire          sample_en;  // 48 kHz sample strobe        -> uio_out[0]
 
   // ---------------------------------------------------------------------------
@@ -101,7 +97,6 @@ module tt_um_abeccari_swsynth (
 
   // ---------------------------------------------------------------------------
   // 4. CORDIC core (rotation mode) + quadrant fold : phase code -> signed sin/cos
-  //    TODO
   // ---------------------------------------------------------------------------
 
   wire signed [SW-1:0] sine_s, cos_s; // signed CORDIC outputs, Q2.(SW-2)
@@ -116,30 +111,38 @@ module tt_um_abeccari_swsynth (
 
   // ---------------------------------------------------------------------------
   // 5a. Output format : round + saturate signed SW -> OW, then to offset-binary.
-  //     Drive sine_ob and cos_ob (64 = zero-crossing).
+  //     Only the SINE has a parallel output (uo_out[6:0], 64 = zero-crossing);
+  //     the cosine is emitted as PDM_Q (block 5b).
   // ---------------------------------------------------------------------------
 
   sample_to_ob #(.SW(SW), .OW(OW)) u_sine_fmt (.s(sine_s), .ob(sine_ob));
-  sample_to_ob #(.SW(SW), .OW(OW)) u_cos_fmt  (.s(cos_s),  .ob(cos_ob));
 
   // ---------------------------------------------------------------------------
   // 5b. Sigma-delta : 1st-order modulator at full clk rate (OSR = 256), fed the
-  //     FULL-precision sample (not the 7-bit value). Drive pdm_bit.
+  //     FULL-precision sample (not the 7-bit value). Drive pdm_i / pdm_q.
   // ---------------------------------------------------------------------------
 
   // Full-precision SW-bit sine (scaled to full swing) -> better PDM SNR than the 7-bit value.
   wire [SW-1:0] sine_dsm;
   sample_to_ob #(.SW(SW), .OW(SW)) u_sine_dsm (.s(sine_s), .ob(sine_dsm));
 
-  sigma_delta #(.W(SW)) u_dsm (
-      .clk(clk), .rst_n(rst_n), .x(sine_dsm), .pdm_bit(pdm_bit)
+  sigma_delta #(.W(SW)) u_dsm_sin (
+      .clk(clk), .rst_n(rst_n), .x(sine_dsm), .pdm_bit(pdm_i)
+  );
+
+  // Sigma-delta cosine output (scaled to full swing)
+  wire [SW-1:0] cosine_dsm;
+  sample_to_ob #(.SW(SW), .OW(SW)) u_cos_dsm (.s(cos_s), .ob(cosine_dsm));
+
+  sigma_delta #(.W(SW)) u_dsm_cos (
+      .clk(clk), .rst_n(rst_n), .x(cosine_dsm), .pdm_bit(pdm_q)
   );
 
   // ---------------------------------------------------------------------------
   // 6. Pin mapping
   // ---------------------------------------------------------------------------
-  assign uo_out  = {pdm_bit, sine_ob};    // [7]=PDM, [6:0]=sine (offset-binary)
-  assign uio_out = {cos_ob, sample_en};   // [7:1]=cosine, [0]=SAMPLE_EN
+  assign uo_out  = {pdm_i, sine_ob};    // [7]=PDM_I, [6:0]=sine (offset-binary)
+  assign uio_out = {6'b0, pdm_q, sample_en};   // [7:2]=0 (unused), [1]=PDM_Q, [0]=SAMPLE_EN
   assign uio_oe  = 8'hFF;                  // all bidir pins driven as outputs
 
   // List all unused inputs to prevent warnings.
