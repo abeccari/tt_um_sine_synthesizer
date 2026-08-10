@@ -18,6 +18,8 @@ Signal chain:
    - `uo[6:0]` — **7-bit parallel sine**, offset-binary (`0x40` = zero crossing), refreshed once per 48 kHz sample. `uio[0]` (**SAMPLE_EN**) pulses high for one clock at each new sample.
    - `uo[7]` — **PDM_I**, a 1-bit sigma-delta stream of the sine at the full clock rate; low-pass filtered, it reconstructs the analog sine.
    - `uio[7]` — **PDM_Q**, the same for the cosine (90° out of phase with PDM_I) — an I/Q pair.
+   - `uio[6]` — **SQR**, a 1-bit square wave at the tone frequency (the sign of the sine); a clean digital output that needs no filter.
+   - `uio[5]` — **SAW**, a 1-bit sigma-delta sawtooth at the tone frequency (the raw phase ramp); low-pass filter to reconstruct.
 
 Semitone codes on `ui[3:0]` (codes 12–15 have no distinct note and fold back to A):
 

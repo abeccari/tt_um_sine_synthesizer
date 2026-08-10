@@ -48,8 +48,8 @@ pinout:
   uio[2]: "unused"
   uio[3]: "unused"
   uio[4]: "unused"
-  uio[5]: "unused"
-  uio[6]: "unused"
+  uio[5]: "SAW (1-bit sigma-delta sawtooth at the tone frequency)"
+  uio[6]: "SQR (1-bit square wave at the tone frequency)"
   uio[7]: "PDM_Q (1-bit sigma-delta audio out - 90 degrees out of phase from PDM_I)"
 
 # Do not change!
