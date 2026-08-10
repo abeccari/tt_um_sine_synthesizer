@@ -5,7 +5,7 @@
 Pinout (see src/project.v):
   ui_in[3:0]   = NOTE          ui_in[7:4]   = OCTAVE
   uo_out[6:0]  = SINE (ob)     uo_out[7]    = PDM_I  (sine sigma-delta)
-  uio_out[0]   = SAMPLE_EN     uio_out[1]   = PDM_Q  (cosine sigma-delta)
+  uio_out[0]   = SAMPLE_EN     uio_out[7]   = PDM_Q  (cosine sigma-delta)
 """
 
 import math
@@ -54,7 +54,7 @@ async def test_reset(dut):
     assert str(dut.uio_out.value)[-1] == "0",          "SAMPLE_EN not low in reset"
     assert str(dut.uo_out.value)[0]  == "0",           "PDM not low in reset"
     assert int(dut.uo_out.value) & 0x7F == 64,         "SINE not at midscale in reset"
-    assert str(dut.uio_out.value)[-2] == "0",          "PDM_Q not low in reset"
+    assert str(dut.uio_out.value)[0] == "0",           "PDM_Q not low in reset"
 
     # while held in reset, SAMPLE_EN must never pulse
     for _ in range(2 * DIV):
@@ -268,7 +268,7 @@ async def test_sine(dut):
 
 @cocotb.test()
 async def test_pdm_audio(dut):
-    """Capture both 1-bit PDM streams (I=uo_out[7], Q=uio_out[1]) at the full clock,
+    """Capture both 1-bit PDM streams (I=uo_out[7], Q=uio_out[7]) at the full clock,
     low-pass each at 24 kHz, and check the recovered tones: centre frequency, in-band
     SFDR (I), and I/Q quadrature via their cross-correlation (~0 at zero lag, extremal
     at a quarter period). Amplitude is arbitrary after filtering, so it's not asserted."""
@@ -329,13 +329,13 @@ async def test_pdm_audio(dut):
         await RisingEdge(dut.clk)
         await ClockCycles(dut.clk, 4 * DIV)           # let the DSM/CORDIC settle
 
-        # capture both 1-bit PDM outputs every clock: I on uo_out[7], Q on uio_out[1]
+        # capture both 1-bit PDM outputs every clock: I on uo_out[7], Q on uio_out[7]
         bits_i = np.empty(N, dtype=np.int8)
         bits_q = np.empty(N, dtype=np.int8)
         for i in range(N):
             await RisingEdge(dut.clk)
             bits_i[i] = (int(dut.uo_out.value)  >> 7) & 1
-            bits_q[i] = (int(dut.uio_out.value) >> 1) & 1
+            bits_q[i] = (int(dut.uio_out.value) >> 7) & 1
         x_i = bits_i.astype(float) * 2.0 - 1.0        # 0/1 -> -1/+1
         x_q = bits_q.astype(float) * 2.0 - 1.0
         y_i = np.convolve(x_i, h, mode="same")        # low-pass -> recovered sine
