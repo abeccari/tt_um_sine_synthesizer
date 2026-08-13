@@ -9,8 +9,10 @@
  *   uo_out[6:0]  SINE      : 7-bit sine sample, OFFSET-BINARY (64 = zero-crossing)
  *   uo_out[7]    PDM_I     : 1-bit sigma-delta stream of the sine   (clk rate)
  *   uio_out[0]   SAMPLE_EN : 48 kHz sample strobe (debug / scope trigger)
- *   uio_out[1]   PDM_Q     : 1-bit sigma-delta stream of the cosine (quadrature to PDM_I)
- *   uio_out[7:2]           : unused (tied 0)
+ *   uio_out[7]   PDM_Q     : 1-bit sigma-delta stream of the cosine (quadrature to PDM_I)
+ *   uio_out[6]   SQR       : 1-bit square wave (sign of the sine, same f_out; no filter needed)
+ *   uio_out[5]   SAW       : 1-bit sigma-delta sawtooth (top phase bits, same f_out)
+ *   uio_out[4:1]           : unused (tied 0)
  *   clk                    : 12.288 MHz  (= 256 * 48 kHz sample rate)
  *   rst_n                  : active-low reset
  *
@@ -25,7 +27,7 @@
  *          v                              v                              v
  *   [sine -> offset-binary]     [sine -> sigma-delta]         [cos -> sigma-delta]
  *          v                              v                              v
- *      sine_ob (uo[6:0])           pdm_i (uo[7])                 pdm_q (uio[1])
+ *      sine_ob (uo[6:0])           pdm_i (uo[7])                 pdm_q (uio[7])
  */
 
 `default_nettype none
@@ -53,7 +55,9 @@ module tt_um_abeccari_swsynth (
   // ---------------------------------------------------------------------------
   wire [OW-1:0] sine_ob;    // 7-bit sine,   offset-binary -> uo_out[6:0]
   wire          pdm_i;    // 1-bit sigma-delta           -> uo_out[7]
-  wire          pdm_q;    // 1-bit sigma-delta           -> uio_out[1]
+  wire          pdm_q;    // 1-bit sigma-delta           -> uio_out[7]
+  wire          sqr;      // 1-bit square wave           -> uio_out[6]
+  wire          pdm_saw;    // 1-bit sigma-delta sawtooth  -> uio_out[5]
   wire          sample_en;  // 48 kHz sample strobe        -> uio_out[0]
 
   // ---------------------------------------------------------------------------
@@ -138,11 +142,21 @@ module tt_um_abeccari_swsynth (
       .clk(clk), .rst_n(rst_n), .x(cosine_dsm), .pdm_bit(pdm_q)
   );
 
+  // 5c. Square wave: MSB (sign) of the sine -> square at f_out, phase-aligned to PDM_I.
+  //     High during the negative half-cycle; needs no reconstruction filter.
+  assign sqr = sine_s[SW-1];
+
+  // 5d. Sawtooth: the top SW bits of the phase accumulator are already a full-scale
+  //     ramp (0 -> max). Phase-aligned to PDM_I via the shared NCO.
+  sigma_delta #(.W(SW)) u_dsm_saw (
+      .clk(clk), .rst_n(rst_n), .x(phase_acc[N_ACC-1 -: SW]), .pdm_bit(pdm_saw)
+  );
+
   // ---------------------------------------------------------------------------
   // 6. Pin mapping
   // ---------------------------------------------------------------------------
   assign uo_out  = {pdm_i, sine_ob};    // [7]=PDM_I, [6:0]=sine (offset-binary)
-  assign uio_out = {6'b0, pdm_q, sample_en};   // [7:2]=0 (unused), [1]=PDM_Q, [0]=SAMPLE_EN
+  assign uio_out = {pdm_q, sqr, pdm_saw, 4'b0, sample_en};   // [7]=PDM_Q, [6]=SQR, [5]=SAW, [4:1]=0 (unused), [0]=SAMPLE_EN
   assign uio_oe  = 8'hFF;                  // all bidir pins driven as outputs
 
   // List all unused inputs to prevent warnings.

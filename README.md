@@ -25,7 +25,7 @@ NOTE / OCT -> [2FF sync] -> [freq map] -> phase_inc
                v                            v                            v
       [round -> offset-binary]    [sine -> sigma-delta]        [cos -> sigma-delta]
                v                            v                            v
-         SINE (uo[6:0])              PDM_I (uo[7])                PDM_Q (uio[1])
+         SINE (uo[6:0])              PDM_I (uo[7])                PDM_Q (uio[7])
 ```
 
 - **Frequency map** turns note/octave into a phase increment: `f = 27.5 · 2^(note/12) · 2^octave` Hz, octave clamped to ≤ 8 to stay below Nyquist.
@@ -44,8 +44,10 @@ Full detail, test recipe and external-hardware options are on the [datasheet](do
 | `SINE` | `uo_out[6:0]` | 7-bit sine sample, offset-binary (`0x40` = zero crossing) |
 | `PDM_I` | `uo_out[7]` | 1-bit sigma-delta of the sine (clock rate) |
 | `SAMPLE_EN` | `uio_out[0]` | 48 kHz sample strobe, one clock wide |
-| `PDM_Q` | `uio_out[1]` | 1-bit sigma-delta of the cosine (90° from PDM_I) |
-| — | `uio_out[7:2]` | unused, driven 0 |
+| `PDM_Q` | `uio_out[7]` | 1-bit sigma-delta of the cosine (90° from PDM_I) |
+| `SQR` | `uio_out[6]` | 1-bit square wave at the tone frequency (sign of the sine) |
+| `SAW` | `uio_out[5]` | 1-bit sigma-delta sawtooth at the tone frequency (raw phase ramp) |
+| — | `uio_out[4:1]` | unused, driven 0 |
 
 All `uio` pins are outputs (`uio_oe = 0xFF`). Clock is 12.288 MHz = 256 × 48 kHz; `rst_n` is active-low. The note can change at any time and the tone follows on the next samples.
 
