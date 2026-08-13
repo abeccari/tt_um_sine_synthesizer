@@ -10,6 +10,7 @@ Pinout (see src/project.v):
 
 import math
 import os
+import numpy as np
 
 import cocotb
 from cocotb.clock import Clock
@@ -196,8 +197,6 @@ async def test_sine(dut):
     """Capture the parallel SINE output (uo_out[6:0]); check spectrum @ f_ideal,
     amplitude, and spectral purity. The cosine is emitted only as PDM_Q, so its
     quadrature with the sine is verified in test_pdm_audio."""
-    import os
-    import numpy as np
 
     # Waveform PNGs are opt-in: run `make PLOT_WAVES=1`. Keeps matplotlib off the
     # CI path -- CI runs the numeric checks and never imports it.
@@ -272,8 +271,6 @@ async def test_pdm_audio(dut):
     low-pass each at 24 kHz, and check the recovered tones: centre frequency, in-band
     SFDR (I), and I/Q quadrature via their cross-correlation (~0 at zero lag, extremal
     at a quarter period). Amplitude is arbitrary after filtering, so it's not asserted."""
-    import os
-    import numpy as np
 
     plot = os.environ.get("PLOT_WAVES", "").lower() in ("1", "true", "yes", "on")
     if plot:
@@ -410,3 +407,125 @@ async def test_pdm_audio(dut):
             fig.tight_layout()
             fig.savefig(os.path.join(outdir, f"pdm_note{note}_oct{octv}.png"), dpi=90)
             plt.close(fig)
+
+
+@cocotb.test()
+async def test_saw(dut):
+    """SAW (uio_out[5]) is a 1-bit sigma-delta of the phase-accumulator ramp. The phase is
+    held constant between SAMPLE_EN pulses, so the PDM density over each 256-clock window
+    equals phase/2^SW -- averaging it recovers one saw value per 48 kHz sample. Check the
+    ramp is monotonic once phase-unwrapped, and that it wraps at the NCO (tone) period."""
+
+    plot = os.environ.get("PLOT_WAVES", "").lower() in ("1", "true", "yes", "on")
+    if plot:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        outdir = os.path.join(os.path.dirname(__file__), "waves")
+        os.makedirs(outdir, exist_ok=True)
+
+    await start_and_reset(dut)
+
+    # A high-ish octave keeps the per-sample ramp step (~0.04) well above the ~1/256
+    # reconstruction noise, so monotonicity is unambiguous while still showing many steps.
+    note, octv  = 0, 6
+    inc         = expected_phase_inc(note, octv)
+    period_samp = (1 << N_ACC) / inc                     # samples per saw period
+    f_ideal     = FS / period_samp                       # = tone frequency
+
+    dut.ui_in.value = (octv << 4) | note
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 4)
+    dut.rst_n.value = 1
+    await RisingEdge(dut.clk)
+    await ClockCycles(dut.clk, 4 * DIV)                  # settle the sigma-delta
+
+    Nsamp = int(round(5.5 * period_samp))                # ~5 full ramps
+
+    # Align to a SAMPLE_EN pulse so each window is one phase-hold interval, then recover
+    # one saw value per sample = PDM_SAW (uio_out[5]) density over DIV clocks.
+    while sample_en(dut) != "1":
+        await RisingEdge(dut.clk)
+    saw = np.empty(Nsamp)
+    for k in range(Nsamp):
+        ones = 0
+        for _ in range(DIV):
+            await RisingEdge(dut.clk)
+            ones += (int(dut.uio_out.value) >> 5) & 1
+        saw[k] = ones / DIV                              # density in [0, 1] ~ phase_top/2^SW
+
+    # Unwrap: add one full scale each time the ramp resets (a downward jump > half scale).
+    resets    = (np.diff(saw) < -0.5).astype(float)      # 1.0 at each wrap
+    unwrapped = saw + np.concatenate([[0.0], np.cumsum(resets)])
+    wrap_idx  = np.flatnonzero(resets) + 1               # sample indices of the wraps
+
+    # 1) monotonic increasing once unwrapped (tolerance covers the ~1/256 density noise)
+    dmin = float(np.diff(unwrapped).min())
+    assert dmin > -0.02, f"saw not monotonic when unwrapped: worst step {dmin:+.3f}"
+    assert unwrapped[-1] - unwrapped[0] > 1.0, "saw did not ramp across a full period"
+
+    # 2) frequency: mean spacing between wraps matches the NCO period (= tone frequency)
+    assert len(wrap_idx) >= 3, f"too few wraps captured ({len(wrap_idx)})"
+    meas_period = float(np.diff(wrap_idx).mean())
+    f_saw       = FS / meas_period
+    dut._log.info(f"SAW note {note} oct {octv}: period {meas_period:.2f} samp "
+                  f"(expected {period_samp:.2f}), f={f_saw:.1f} Hz (ideal {f_ideal:.1f}), "
+                  f"{len(wrap_idx)} wraps, worst step {dmin:+.3f}")
+    assert abs(meas_period - period_samp) < 1.0, \
+        f"saw period {meas_period:.2f} samp vs expected {period_samp:.2f}"
+
+    if plot:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
+        ax1.step(range(Nsamp), saw, where="mid")
+        ax1.set(title=f"SAW note {note} oct {octv} (f={f_ideal:.0f} Hz)",
+                xlabel="48 kHz sample", ylabel="recovered level"); ax1.grid(True)
+        ax2.plot(unwrapped, ".-")
+        ax2.set(title="phase-unwrapped", xlabel="48 kHz sample",
+                ylabel="unwrapped level"); ax2.grid(True)
+        fig.tight_layout()
+        fig.savefig(os.path.join(outdir, f"saw_note{note}_oct{octv}.png"), dpi=90)
+        plt.close(fig)
+
+
+@cocotb.test()
+async def test_sqr(dut):
+    """SQR (uio_out[6]) is a direct square wave signal generated by grabbing the sine output MSB. 
+    This test verifies that the square wave frequency matches the NCO frequency and the duty cycle is about 0.5."""
+
+    await start_and_reset(dut)
+
+    note, octv  = 3, 8
+    inc         = expected_phase_inc(note, octv)
+    period_samp = (1 << N_ACC) / inc                     # samples per square wave period
+    f_ideal     = FS / period_samp                       # = tone frequency
+
+    dut.ui_in.value = (octv << 4) | note
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 4)
+    dut.rst_n.value = 1
+    await RisingEdge(dut.clk)
+
+    Nsamp = int(round(12 * period_samp))
+
+    sqr = np.empty(Nsamp)
+    for k in range(Nsamp):
+        while sample_en(dut) != "1":
+            await RisingEdge(dut.clk)
+        await ClockCycles(dut.clk, 2)                   # Wait for the square wave output to settle down
+        sqr[k] = (int(dut.uio_out.value) >> 6) & 1
+
+    # 2) frequency: square wave period matches the NCO period (= tone frequency)
+
+    rising_idx= np.flatnonzero(np.diff(sqr) == 1)
+    assert len(rising_idx) >= 3, f"too few rising edges captured ({len(rising_idx)})"
+    meas_period = float(np.diff(rising_idx).mean())
+    duty_cycle = np.mean(sqr)
+    f_sqr = FS / meas_period
+    assert abs(duty_cycle - 0.5) < 0.025, f"Duty cycle is {duty_cycle:.2f} (should be ~0.5)"
+
+    dut._log.info(f"SQR note {note} oct {octv}: period {meas_period:.2f} samp "
+                  f"(expected {period_samp:.2f}), f={f_sqr:.1f} Hz (ideal {f_ideal:.1f}), "
+                  f"duty cycle {duty_cycle:.2f}")
+    assert abs(meas_period - period_samp) < 1.0, \
+        f"sqr period {meas_period:.2f} samp vs expected {period_samp:.2f}"
+
