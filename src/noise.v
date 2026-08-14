@@ -17,9 +17,10 @@ module noise #(
     
     always @(posedge clk) begin
         if (~rst_n)
-            lfsr <= 20'habba;
+            lfsr <= 20'h0abba;
         else if (sample_en)
-            lfsr <= {lfsr[LFSR_TAP1] ^ lfsr[LFSR_TAP0], lfsr[LFSR_BITS-1:1]};
+            lfsr <= {(lfsr[LFSR_TAP1] ^ lfsr[LFSR_TAP0]) | (~|lfsr), lfsr[LFSR_BITS-1:1]};
+            // The XOR with ^ (~|lfsr) prevents the LFSR from getting stuck at 0x0.
     end
 
     assign out = lfsr[0];
