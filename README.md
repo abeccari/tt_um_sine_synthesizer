@@ -84,7 +84,7 @@ All `uio` pins are outputs (`uio_oe = 0xFF`). Clock is 12.288 MHz = 256 × 48 kH
 uv run --extra plot python docs/cordic_sample.py
 ```
 
-**cocotb tests.** [`test/test.py`](test/test.py) drives the assembled design and checks its behaviour — spectral and quadrature properties rather than bit-exact samples, since the modulators and output formatting sit downstream of the CORDIC:
+**cocotb tests.** [`test/test.py`](test/test.py) drives the assembled design and checks its behaviour — mostly spectral and quadrature properties rather than bit-exact samples (the modulators and formatting sit downstream of the CORDIC), plus a bit-exact check for the deterministic noise PRBS:
 
 | Test | Property | Breaks if |
 |---|---|---|
@@ -93,8 +93,11 @@ uv run --extra plot python docs/cordic_sample.py
 | `test_nco_period` | phase wraps at the mapped frequency across octaves and notes; within 5 cents of ideal | freq map / accumulator wrong |
 | `test_sine` | parallel sine: DC ≈ 0, correct amplitude, spectral peak at `f_ideal`, SFDR > 25 dB | CORDIC or formatting wrong |
 | `test_pdm_audio` | both PDM streams reconstruct to `f_ideal`, sine SFDR > 30 dB, and I/Q are in quadrature (cross-correlation ≈ 0 at zero lag, extremal at a quarter period) | modulator or quadrature wrong |
+| `test_saw` | `SAW` density recovers a monotonic phase ramp that wraps at the tone period | sawtooth / sigma-delta wrong |
+| `test_sqr` | `SQR` is a ~50%-duty square whose period matches the NCO tone frequency | sign path / NCO wrong |
+| `test_noise` | `NOISE` matches the LFSR PRBS bit-for-bit vs the [`docs/lfsr_sequence.py`](docs/lfsr_sequence.py) model (seed + taps read from `noise.v`) at spaced checkpoints | LFSR taps / seed / step timing wrong |
 
-`test_reset` and `test_nco_period` are whitebox (they read internal nets) and auto-skip under gate-level simulation (`GATES=yes`), where those nets no longer exist in the netlist.
+`test_reset` and `test_nco_period` are whitebox (they read internal nets) and auto-skip under gate-level simulation (`GATES=yes`), where those nets no longer exist in the netlist; the rest read only the output pins and run in both RTL and gate-level. `test_noise` coverage is tunable via `NOISE_STRIDE` / `NOISE_CHECKPOINTS` (runtime scales with total steps simulated).
 
 ## Running the tests
 
