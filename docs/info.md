@@ -20,6 +20,7 @@ Signal chain:
    - `uio[7]` — **PDM_Q**, the same for the cosine (90° out of phase with PDM_I) — an I/Q pair.
    - `uio[6]` — **SQR**, a 1-bit square wave at the tone frequency (the sign of the sine); a clean digital output that needs no filter.
    - `uio[5]` — **SAW**, a 1-bit sigma-delta sawtooth at the tone frequency (the raw phase ramp); low-pass filter to reconstruct.
+   - `uio[4]` — **NOISE**, a 1-bit pseudo-random bitstream from a maximal-length 20-bit LFSR, advanced one step per 48 kHz sample. Its spectrum is flat across the audio band (white noise); low-pass filter to hear it. The sequence is deterministic and repeats every 2²⁰−1 samples (≈ 21.8 s).
 
 Semitone codes on `ui[3:0]` (codes 12–15 have no distinct note and fold back to A):
 

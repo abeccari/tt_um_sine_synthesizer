@@ -47,7 +47,8 @@ Full detail, test recipe and external-hardware options are on the [datasheet](do
 | `PDM_Q` | `uio_out[7]` | 1-bit sigma-delta of the cosine (90° from PDM_I) |
 | `SQR` | `uio_out[6]` | 1-bit square wave at the tone frequency (sign of the sine) |
 | `SAW` | `uio_out[5]` | 1-bit sigma-delta sawtooth at the tone frequency (raw phase ramp) |
-| — | `uio_out[4:1]` | unused, driven 0 |
+| `NOISE` | `uio_out[4]` | 1-bit white noise, maximal-length LFSR PRBS (period 2²⁰−1), stepped at 48 kHz |
+| — | `uio_out[3:1]` | unused, driven 0 |
 
 All `uio` pins are outputs (`uio_oe = 0xFF`). Clock is 12.288 MHz = 256 × 48 kHz; `rst_n` is active-low. The note can change at any time and the tone follows on the next samples.
 
@@ -137,7 +138,8 @@ WAV_LPF=0 uv run make wav                    # skip the reconstruction filter (a
 │   ├── note4_oct8.png        # parallel sine waveform + spectrum
 │   └── pdm_note0_oct8.png    # PDM I/Q reconstruction + cross-correlation
 ├── src/
-│   └── project.v             # top level + freq_map, nco, cordic, sigma_delta, sample_to_ob
+│   ├── project.v             # top level + freq_map, nco, cordic, sigma_delta, sample_to_ob
+│   └── noise.v               # maximal-length LFSR white-noise generator
 └── test/
     ├── Makefile              # cocotb + Icarus Verilog; also the `wav` target
     ├── requirements.txt      # pinned cocotb, pytest, numpy
