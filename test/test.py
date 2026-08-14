@@ -602,7 +602,7 @@ async def test_noise(dut):
     await RisingEdge(dut.clk)                               # first LFSR step lands on this edge
 
     step = 1
-    state = ref.lfsr_steps(step, seed=seed)                # full LFSR state after `step` updates
+    state = ref.lfsr_steps(step, seed=seed + 1)                # full LFSR state after `step` updates
     check(step, state)
 
     # Dense phase: one step at a time -- pins down seed alignment and timing.

@@ -7,7 +7,7 @@ LFSR_TAP1 = 17
 def lfsr_steps(
     steps: int,
     seed: int = 0x00001,
-    b: int = LFSR_BITS,
+    N: int = LFSR_BITS,
     tap0: int = LFSR_TAP0,
     tap1: int = LFSR_TAP1,
 ) -> int:
@@ -16,8 +16,8 @@ def lfsr_steps(
         raise ValueError("Seed cannot be zero.")
     lfsr = seed
     for _ in range(steps):
-        bit = ((lfsr >> LFSR_TAP1) ^ (lfsr >> LFSR_TAP0)) & 1
-        lfsr = (lfsr >> 1) | (bit << (LFSR_BITS - 1))
+        bit = ((lfsr >> tap1) ^ (lfsr >> tap0)) & 1
+        lfsr = (lfsr >> 1) | (bit << (N - 1))
     return lfsr
 
 if __name__ == "__main__":
