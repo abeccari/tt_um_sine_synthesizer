@@ -529,3 +529,97 @@ async def test_sqr(dut):
     assert abs(meas_period - period_samp) < 1.0, \
         f"sqr period {meas_period:.2f} samp vs expected {period_samp:.2f}"
 
+
+
+# --- NOISE / LFSR PRBS reference ----------------------------------------------
+# NOISE (uio_out[4]) is bit 0 of a maximal-length LFSR advanced one step per
+# SAMPLE_EN (48 kHz). It is fully deterministic, so we check it bit-for-bit
+# against the standalone Python model in docs/lfsr_sequence.py.
+#
+# Single source of truth: the seed and taps are parsed straight out of
+# src/noise.v at run time, and we assert the docs model's constants agree -- so
+# an RTL change that isn't mirrored in the model (or vice-versa) fails loudly.
+
+def _parse_noise_rtl():
+    """Read LFSR_BITS/TAP0/TAP1 and the reset seed straight from src/noise.v."""
+    import re
+    path = os.path.join(os.path.dirname(__file__), "..", "src", "noise.v")
+    with open(path) as f:
+        src = f.read()
+
+    def _param(name):
+        m = re.search(rf"parameter\s+integer\s+{name}\s*=\s*(\d+)", src)
+        assert m, f"could not find parameter {name} in {path}"
+        return int(m.group(1))
+
+    bits, tap0, tap1 = _param("LFSR_BITS"), _param("LFSR_TAP0"), _param("LFSR_TAP1")
+
+    # Reset seed: the sized Verilog literal assigned under `if (~rst_n)`. The
+    # feedback assignment on the next line starts with `{`, so it can't match.
+    m = re.search(r"lfsr\s*<=\s*(\d+)'([hdbHDB])([0-9a-fA-F_]+)\s*;", src)
+    assert m, f"could not find the LFSR reset seed literal in {path}"
+    base = {"h": 16, "d": 10, "b": 2}[m.group(2).lower()]
+    seed = int(m.group(3).replace("_", ""), base)
+    assert seed != 0, "LFSR reset seed is zero -- the generator would lock up"
+    return bits, tap0, tap1, seed
+
+
+@cocotb.test()
+async def test_noise(dut):
+    """NOISE (uio_out[4]) reproduces the deterministic LFSR PRBS exactly. Compare
+    the pin against docs/lfsr_sequence.py at spaced checkpoints across a long run:
+    a dense burst first (catches seed / off-by-one / timing bugs), then large
+    STRIDE jumps (any per-step drift would diverge long before the next check)."""
+    
+    import lfsr_sequence as ref
+
+    bits, tap0, tap1, seed = _parse_noise_rtl()
+    assert (bits, tap0, tap1) == (ref.LFSR_BITS, ref.LFSR_TAP0, ref.LFSR_TAP1), (
+        f"noise.v params ({bits},{tap0},{tap1}) != lfsr_sequence.py "
+        f"({ref.LFSR_BITS},{ref.LFSR_TAP0},{ref.LFSR_TAP1}) -- keep them in sync")
+
+    # How far / how often to check. Light by default; override via env vars.
+    STRIDE = int(os.environ.get("NOISE_STRIDE", 10))      # SAMPLE_EN steps between checkpoints
+    NCHECK = int(os.environ.get("NOISE_CHECKPOINTS", 8))    # number of spaced checkpoints
+    NDENSE = 16                                             # first N steps checked one-by-one
+
+    def noise_bit():
+        return (int(dut.uio_out.value) >> 4) & 1
+
+    def check(step, state):
+        got, exp = noise_bit(), state & 1                  # out = lfsr[0]
+        assert got == exp, (
+            f"NOISE mismatch at step {step}: DUT={got} model={exp} "
+            f"(lfsr=0x{state:05x}, seed=0x{seed:05x})")
+
+    await start_and_reset(dut)
+
+    # After reset the LFSR holds the seed. Align to the first SAMPLE_EN and let it
+    # take one step; from here we sit exactly on the sample grid (div just wrapped
+    # to 0), so ClockCycles(n*DIV) advances exactly n further LFSR steps.
+    while sample_en(dut) != "1":
+        await RisingEdge(dut.clk)
+    await RisingEdge(dut.clk)                               # first LFSR step lands on this edge
+
+    step = 1
+    state = ref.lfsr_steps(step, seed=seed)                # full LFSR state after `step` updates
+    check(step, state)
+
+    # Dense phase: one step at a time -- pins down seed alignment and timing.
+    for _ in range(NDENSE):
+        await ClockCycles(dut.clk, DIV)                    # exactly one more SAMPLE_EN step
+        step += 1
+        state = ref.lfsr_steps(1, seed=state)
+        check(step, state)
+
+    # Sparse phase: jump STRIDE steps to land on states far apart in the 2^20-1
+    # cycle; advance the model by the same stride so the two stay locked.
+    for _ in range(NCHECK):
+        await ClockCycles(dut.clk, STRIDE * DIV)
+        step += STRIDE
+        state = ref.lfsr_steps(STRIDE, seed=state)
+        check(step, state)
+
+    dut._log.info(
+        f"NOISE: matched Python LFSR model bit-for-bit at {NDENSE + NCHECK + 1} "
+        f"checkpoints up to step {step} (seed=0x{seed:05x}, taps {{{tap1},{tap0}}})")

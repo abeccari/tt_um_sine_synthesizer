@@ -12,7 +12,8 @@
  *   uio_out[7]   PDM_Q     : 1-bit sigma-delta stream of the cosine (quadrature to PDM_I)
  *   uio_out[6]   SQR       : 1-bit square wave (sign of the sine, same f_out; no filter needed)
  *   uio_out[5]   SAW       : 1-bit sigma-delta sawtooth (top phase bits, same f_out)
- *   uio_out[4:1]           : unused (tied 0)
+ *   uio_out[4]   NOISE     : 1-bit white noise (maximal-length LFSR PRBS, stepped at 48 kHz)
+ *   uio_out[3:1]           : unused (tied 0)
  *   clk                    : 12.288 MHz  (= 256 * 48 kHz sample rate)
  *   rst_n                  : active-low reset
  *
@@ -58,6 +59,7 @@ module tt_um_abeccari_swsynth (
   wire          pdm_q;    // 1-bit sigma-delta           -> uio_out[7]
   wire          sqr;      // 1-bit square wave           -> uio_out[6]
   wire          pdm_saw;    // 1-bit sigma-delta sawtooth  -> uio_out[5]
+  wire          noise_bit;  // 1-bit white-noise PRBS       -> uio_out[4]
   wire          sample_en;  // 48 kHz sample strobe        -> uio_out[0]
 
   // ---------------------------------------------------------------------------
@@ -152,11 +154,17 @@ module tt_um_abeccari_swsynth (
       .clk(clk), .rst_n(rst_n), .x(phase_acc[N_ACC-1 -: SW]), .pdm_bit(pdm_saw)
   );
 
+  // 5e. White noise: maximal-length LFSR (period 2^20-1) advanced one step per 48 kHz
+  //     sample. out = LFSR bit 0 -> a PRBS whose spectrum is flat across the audio band.
+  noise #(.LFSR_BITS(N_ACC), .LFSR_TAP0(0), .LFSR_TAP1(17)) u_noise (
+      .clk(clk), .rst_n(rst_n), .sample_en(sample_en), .out(noise_bit)
+  );
+
   // ---------------------------------------------------------------------------
   // 6. Pin mapping
   // ---------------------------------------------------------------------------
   assign uo_out  = {pdm_i, sine_ob};    // [7]=PDM_I, [6:0]=sine (offset-binary)
-  assign uio_out = {pdm_q, sqr, pdm_saw, 4'b0, sample_en};   // [7]=PDM_Q, [6]=SQR, [5]=SAW, [4:1]=0 (unused), [0]=SAMPLE_EN
+  assign uio_out = {pdm_q, sqr, pdm_saw, noise_bit, 3'b0, sample_en};   // [7]=PDM_Q, [6]=SQR, [5]=SAW, [4]=NOISE, [3:1]=0 (unused), [0]=SAMPLE_EN
   assign uio_oe  = 8'hFF;                  // all bidir pins driven as outputs
 
   // List all unused inputs to prevent warnings.
