@@ -59,21 +59,21 @@ All `uio` pins are outputs (`uio_oe = 0xFF`). Clock is 12.288 MHz = 256 × 48 kH
 
 | | |
 |---|---|
-| Utilisation | 78.5% |
-| Standard cells | 1665 (excl. fill) |
-| Flip-flops | 114 |
+| Utilisation | 85.9% |
+| Standard cells | 1819 (excl. fill) |
+| Flip-flops | 134 |
 | Inferred latches | none |
 | Lint | 0 errors, 7 warnings |
 | DRC / LVS / antenna | clean (magic DRC 0, LVS 0, antenna 0) |
-| Power (typ) | ~0.77 mW |
+| Power (typ) | ~0.82 mW |
 
 **Timing** — closed with **zero setup and hold violations at all three corners** (20 ns period):
 
 | Corner | Setup slack | Critical path | Implied f_max |
 |---|---|---|---|
-| slow, 1.08 V, 125 °C | 4.46 ns | 15.54 ns | ≈ 64 MHz |
-| typical, 1.20 V, 25 °C | 10.08 ns | 9.92 ns | ≈ 101 MHz |
-| fast, 1.32 V, −40 °C | 13.41 ns | 6.59 ns | ≈ 152 MHz |
+| slow, 1.08 V, 125 °C | 3.30 ns | 16.70 ns | ≈ 60 MHz |
+| typical, 1.20 V, 25 °C | 9.30 ns | 10.70 ns | ≈ 93 MHz |
+| fast, 1.32 V, −40 °C | 12.89 ns | 7.11 ns | ≈ 141 MHz |
 <!-- METRICS:END -->
 
 `f_max = 1 / (period − setup_slack)` and is a floor, not a ceiling: the flow hardens at a fixed 20 ns and stops optimising once slack is met. The worst-case path is the internal CORDIC datapath (`phase_acc → arithmetic → register`), register-to-register. In practice the silicon is good from DC up to ~60 MHz within the process corners; the demo board's on-board clock tops out at 50 MHz, met with ~3.9 ns of margin at the slow corner. The intended operating point is 12.288 MHz.
