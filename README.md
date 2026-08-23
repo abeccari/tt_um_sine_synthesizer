@@ -41,6 +41,11 @@ SINE (uo[6:0])   PDM_I (uo[7])        PDM_Q (uio[7])        SQR (uio[6])
   - `SAW` — the top bits of the phase ramp, sigma-delta modulated: a sawtooth at the tone frequency.
   - `NOISE` — an independent maximal-length 20-bit LFSR PRBS (period 2^(20)−1 ≈ 21.8 s) stepped at 48 kHz: audio-band white noise.
 
+<p align="center">
+  <img src="docs/cordic_rotation.png" width="500"
+       alt="Two stacked panels for one CORDIC run. Top: a polar plot of the (cos, sin) vector, starting on the x-axis at r = 1/K ≈ 0.607 and, over the iterations, zig-zagging in angle toward the target while its length grows to ≈ 1 and lands on the ideal point. Bottom: the angle error to the target versus iteration on a log axis, falling roughly geometrically and bounded by the per-step correction atan(2⁻ᵏ).">
+</p>
+
 Full detail, test recipe and external-hardware options are on the [datasheet](docs/info.md).
 
 ## Pin map
@@ -90,7 +95,7 @@ The worst-case path is the internal CORDIC datapath (`phase_acc → arithmetic �
 
 ## Golden model and tests
 
-**Golden model.** [`docs/cordic_sample.py`](docs/cordic_sample.py) is a self-contained Python model of the CORDIC core — the same Q2.(W−2) fixed point, `atan` table, quadrant folding and arithmetic shifts as the RTL `cordic` module. It was used to develop and cross-check the rotation algorithm and to choose the iteration count from its convergence curve (RMS error vs. number of iterations). Run it standalone to see the approximation against ground truth and the convergence plot:
+**Golden model.** [`docs/cordic_sample.py`](docs/cordic_sample.py) is a self-contained Python model of the CORDIC core — the same Q2.(W−2) fixed point, `atan` table, quadrant folding and arithmetic shifts as the RTL `cordic` module. It was used to develop and cross-check the rotation algorithm and to choose the iteration count from its convergence curve (RMS error vs. number of iterations). Run it standalone to see the approximation against ground truth and the convergence plot, and to write the per-iteration rotation figure (`docs/cordic_rotation.png`, shown above):
 
 ```bash
 uv run --extra plot python docs/cordic_sample.py
@@ -149,7 +154,8 @@ WAV_LPF=0 uv run make wav                    # skip the reconstruction filter (a
 ├── .github/workflows/        # gds, docs, test, fpga
 ├── docs/
 │   ├── info.md               # datasheet page
-│   ├── cordic_sample.py      # bit-accurate CORDIC model
+│   ├── cordic_sample.py      # bit-accurate CORDIC model + plots (convergence, rotation)
+│   ├── cordic_rotation.png   # per-iteration CORDIC rotation figure (from cordic_sample.py)
 │   ├── note4_oct8.png        # parallel sine waveform + spectrum
 │   ├── tile_gds_wip.png      # GDS render (refreshed from the gds_render artifact)
 │   └── pdm_note0_oct8.png    # PDM I/Q reconstruction + cross-correlation
