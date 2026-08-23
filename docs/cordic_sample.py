@@ -240,7 +240,7 @@ if __name__ == "__main__":
     step = np.degrees([math.atan(2.0 ** -k) for k in ks])       # per-step correction
 
     axc.semilogy(ks, angle_err, "o-", color="C0",
-                 label="angle error  |θ$_k$ − target|")
+                 label="angle error")
     axc.semilogy(ks, step, ":", color="0.5",
                  label="step size  atan(2$^{-k}$)")
     axc.set_xlabel("iteration k")
