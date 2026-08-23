@@ -250,8 +250,11 @@ if __name__ == "__main__":
     axc.grid(True, which="both", ls=":")
     axc.legend(fontsize=8)
 
-    # constrained_layout (set on the figure) handles spacing; no tight_layout,
-    # which warns on polar axes.
+    figp.canvas.draw()
+    figp.set_layout_engine("none")
+    pp, pc = axp.get_position(), axc.get_position()
+    axc.set_position([pp.x0, pc.y0, pp.width, pc.height])
+
     out_png = Path(__file__).resolve().parent / "cordic_rotation.png"
     figp.savefig(out_png, dpi=150, bbox_inches="tight")
     print(f"wrote {out_png}")
