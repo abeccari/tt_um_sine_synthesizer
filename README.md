@@ -6,7 +6,7 @@
 
 [![Made with Claude](https://img.shields.io/badge/Made%20with-Claude-D97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 
-A **CORDIC sine-wave synthesizer** for the Tiny Tapeout IHP 26b shuttle (IHP SG13G2, 130 nm). It plays an equal-tempered musical note as an audio tone, selected from the input pins, and emits it three ways: a 7-bit parallel sample bus and two 1-bit pulse-density-modulated (PDM) streams — sine and cosine, 90° apart — for direct analog reconstruction and I/Q experiments.
+A **CORDIC sine-wave synthesizer** for the [Tiny Tapeout](https://tinytapeout.com/) [IHP 26b shuttle](https://app.tinytapeout.com/shuttles/ttihp26b) (IHP SG13G2, 130 nm). It plays an equal-tempered musical note as an audio tone, selected from the input pins, and emits it as a 7-bit parallel sample bus plus a family of 1-bit outputs: quadrature sine/cosine pulse-density-modulated (PDM) streams — 90° apart — for direct analog reconstruction and I/Q experiments, alongside square, sawtooth and pseudo-random white-noise waveforms.
 
 - [Datasheet page](docs/info.md)
 
@@ -17,21 +17,29 @@ The design is a numerically-controlled oscillator feeding a CORDIC rotator:
 ```
 NOTE / OCT -> [2FF sync] -> [freq map] -> phase_inc
                                             |
-        sample_en (clk/256) -> [phase accumulator, N=20] -> phase
-                                            |
+        sample_en (clk/256) -> [phase accumulator, N=20] -> phase --+--> [top W bits -> sigma-delta] -> SAW (uio[5])
+                                            |                       |
+                                            v                       +--> (sample_en also clocks the LFSR below)
                         [CORDIC rotation + quadrant fold] -> sin, cos  (signed, W=12)
                                             |
-               +----------------------------+----------------------------+
-               v                            v                            v
-      [round -> offset-binary]    [sine -> sigma-delta]        [cos -> sigma-delta]
-               v                            v                            v
-         SINE (uo[6:0])              PDM_I (uo[7])                PDM_Q (uio[7])
+     +-----------------+-------------------+--------------------+
+     v                 v                   v                    v
+[round -> ob]   [sine -> sigma-delta] [cos -> sigma-delta]  [sign(sine)]
+     v                 v                   v                    v
+SINE (uo[6:0])   PDM_I (uo[7])        PDM_Q (uio[7])        SQR (uio[6])
+
+        [maximal-length LFSR PRBS, stepped at 48 kHz] -> NOISE (uio[4])
 ```
 
 - **Frequency map** turns note/octave into a phase increment: `f = 27.5 · 2^(note/12) · 2^octave` Hz, octave clamped to ≤ 8 to stay below Nyquist.
 - **Phase accumulator** (20-bit) advances once per 48 kHz sample (`clk / 256`); `SAMPLE_EN` marks each new sample.
 - **CORDIC** (rotation mode, 8 iterations, 12-bit datapath) produces signed sine and cosine, ~8-bit accurate.
-- **Outputs**: the sine is formatted to 7-bit offset-binary; the full-precision sine and cosine each drive a first-order sigma-delta modulator running at the clock rate.
+- **Outputs** — one oscillator drives six waveforms:
+  - `SINE` — the CORDIC sine formatted to 7-bit offset-binary, refreshed each 48 kHz sample.
+  - `PDM_I` / `PDM_Q` — the full-precision sine and cosine each drive a first-order sigma-delta modulator at the clock rate; 90° apart, an I/Q pair.
+  - `SQR` — the sign bit of the sine: a square wave at the tone frequency.
+  - `SAW` — the top bits of the phase ramp, sigma-delta modulated: a sawtooth at the tone frequency.
+  - `NOISE` — an independent maximal-length 20-bit LFSR PRBS (period 2^(20)−1 ≈ 21.8 s) stepped at 48 kHz: audio-band white noise.
 
 Full detail, test recipe and external-hardware options are on the [datasheet](docs/info.md).
 
