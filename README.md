@@ -84,11 +84,13 @@ All `uio` pins are outputs (`uio_oe = 0xFF`). Clock is 12.288 MHz = 256 × 48 kH
 | fast, 1.32 V, −40 °C | 13.13 ns | 6.87 ns | ≈ 146 MHz |
 <!-- METRICS:END -->
 
-`f_max = 1 / (period − setup_slack)` and is a floor, not a ceiling: the flow hardens at a fixed 20 ns and stops optimising once slack is met. The worst-case path is the internal CORDIC datapath (`phase_acc → arithmetic → register`), register-to-register. In practice the silicon is good from DC up to ~60 MHz within the process corners; the demo board's on-board clock tops out at 50 MHz, met with ~3.9 ns of margin at the slow corner. The intended operating point is 12.288 MHz.
+`f_max = 1 / (period − setup_slack)`
+
+The worst-case path is the internal CORDIC datapath (`phase_acc → arithmetic → register`), register-to-register. In practice the silicon is good from DC up to ~60 MHz within the process corners. The intended operating point is 12.288 MHz.
 
 ## Golden model and tests
 
-**Golden model.** [`docs/cordic_sample.py`](docs/cordic_sample.py) is a self-contained, bit-accurate Python model of the CORDIC core — the same Q2.(W−2) fixed point, `atan` table, quadrant folding and arithmetic shifts as the RTL `cordic` module. It was used to develop and cross-check the rotation algorithm and to choose the iteration count from its convergence curve (RMS error vs. number of iterations). Run it standalone to see the approximation against ground truth and the convergence plot:
+**Golden model.** [`docs/cordic_sample.py`](docs/cordic_sample.py) is a self-contained Python model of the CORDIC core — the same Q2.(W−2) fixed point, `atan` table, quadrant folding and arithmetic shifts as the RTL `cordic` module. It was used to develop and cross-check the rotation algorithm and to choose the iteration count from its convergence curve (RMS error vs. number of iterations). Run it standalone to see the approximation against ground truth and the convergence plot:
 
 ```bash
 uv run --extra plot python docs/cordic_sample.py
@@ -147,7 +149,7 @@ WAV_LPF=0 uv run make wav                    # skip the reconstruction filter (a
 ├── .github/workflows/        # gds, docs, test, fpga
 ├── docs/
 │   ├── info.md               # datasheet page
-│   ├── cordic_sample.py      # bit-accurate CORDIC golden model
+│   ├── cordic_sample.py      # bit-accurate CORDIC model
 │   ├── note4_oct8.png        # parallel sine waveform + spectrum
 │   ├── tile_gds_wip.png      # GDS render (refreshed from the gds_render artifact)
 │   └── pdm_note0_oct8.png    # PDM I/Q reconstruction + cross-correlation
