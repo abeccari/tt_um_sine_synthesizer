@@ -292,7 +292,11 @@ module cordic #(
   // rescale a WMAX-bit constant down to W bits (rounded); constant-folds at elaboration.
   // Round in WMAX bits (sized '1' avoids a 32-bit literal), then narrow explicitly to W.
   function signed [W-1:0] rescale(input [WMAX-1:0] m);
+
+    /* verilator lint_off UNUSEDSIGNAL */
     reg [WMAX-1:0] mr;
+    /* verilator lint_on  UNUSEDSIGNAL */
+
     begin
       mr      = (SH == 0) ? m : ((m + (WMAX'(1) << (SH-1))) >> SH);
       rescale = mr[W-1:0];
@@ -309,7 +313,7 @@ module cordic #(
 
   always @(*) begin
     quad = phase_acc[PW-1 -: 2];            // top 2 bits -> quadrant
-    z    = phase_acc[PW-3 -: (W-2)];        // next W-2 bits -> in-quadrant residual
+    z = {2'b00, phase_acc[PW-3 -: (W-2)]};  // next W-2 bits -> in-quadrant residual
     x    = rescale(GAIN_M);                 // 1/K gain seed
     y    = '0;
     for (k = 0; k < NITER; k = k + 1) begin
@@ -336,6 +340,7 @@ endmodule
 // Format a signed Q2.(SW-2) sample to OW-bit offset-binary:
 // scale amplitude 1.0 (=2^(SW-2)) to near full OW-scale, round, saturate, flip MSB.
 // SHIFT = (SW-2) frac bits -> (OW-1) frac bits  = SW-OW-1.
+
 module sample_to_ob #(
   parameter integer SW    = 12,
   parameter integer OW    = 7,
@@ -349,11 +354,13 @@ module sample_to_ob #(
   // literal would make the whole expression unsigned and turn >>> into a logical shift.
   localparam integer       RSH = (SHIFT > 0) ? SHIFT  : 0;   // narrow: right shift amount
   localparam integer       LSH = (SHIFT < 0) ? -SHIFT : 0;   // widen : left shift amount
-  localparam signed [SW:0] RND = (SHIFT > 0) ? (1 <<< (SHIFT-1)) : 0;   // +1/2 LSB
-  localparam signed [OW:0] HI  =  (1 <<< (OW-1)) - 1;                   // +max
-  localparam signed [OW:0] LO  = -(1 <<< (OW-1));                       // -min
+  localparam integer       SCW = SW + LSH + 1;               // width of s_sc
+  localparam signed [SCW-1:0] RND = (SHIFT > 0) ? (1 <<< (SHIFT-1)) : 0;
+  localparam signed [SCW-1:0] HI  =  (1 <<< (OW-1)) - 1;
+  localparam signed [SCW-1:0] LO  = -(1 <<< (OW-1));
 
-  wire signed [SW+LSH:0] s_sc = (($signed(s) + RND) >>> RSH) <<< LSH;   // round + rescale
+  wire signed [SCW-1:0] s_ext = SCW'($signed(s));   // exact-width, sign-preserving
+  wire signed [SCW-1:0] s_sc  = ((s_ext + RND) >>> RSH) <<< LSH;
   reg  signed [OW-1:0] s_sat;
   always @(*) begin
     if      (s_sc > HI) s_sat = HI[OW-1:0];          // saturate high
